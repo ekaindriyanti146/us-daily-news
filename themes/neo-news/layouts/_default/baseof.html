@@ -1,35 +1,27 @@
 <!DOCTYPE html>
-<html lang="{{ .Site.LanguageCode }}">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ if .IsHome }}{{ .Site.Title }}{{ else }}{{ .Title }} | {{ .Site.Title }}{{ end }}</title>
-    <meta name="description" content="{{ if .IsHome }}{{ .Site.Params.description }}{{ else }}{{ .Description }}{{ end }}">
+    <meta name="description" content="{{ if .IsHome }}{{ .Site.Params.description }}{{ else }}{{ .Summary | default .Site.Params.description }}{{ end }}">
     
-    <!-- Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Merriweather:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
-
-    <!-- CSS -->
-     <!-- Tailwind CSS Processing (UPDATED) -->
-    {{ $options := dict "inlineImports" true }}
-    {{ $style := resources.Get "css/main.css" }}
-    {{ $style = $style | resources.PostCSS $options | minify | fingerprint }}
-    <link rel="stylesheet" href="{{ $style.Permalink }}" integrity="{{ $style.Data.Integrity }}">
- 
-    <!-- Alpine JS -->
+    <!-- Load Tailwind dari CDN untuk memastikan style muncul -->
+    <script src="https://cdn.tailwindcss.com"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    <!-- Fuse JS -->
-    <script src="https://cdn.jsdelivr.net/npm/fuse.js@6.6.2"></script>
 </head>
-<body class="bg-gray-50 text-gray-900 font-sans antialiased flex flex-col min-h-screen">
+<body class="bg-gray-50 text-gray-800 font-sans antialiased flex flex-col min-h-screen">
+
+    <!-- Header -->
     {{ partial "header.html" . }}
-    
-    <main class="container mx-auto px-4 py-8 flex-grow">
+
+    <!-- Main Content (Tempat index.html disuntikkan) -->
+    <main class="flex-grow">
         {{ block "main" . }}{{ end }}
     </main>
 
+    <!-- Footer -->
     {{ partial "footer.html" . }}
-    <script src="/js/search.js"></script>
+
 </body>
 </html>
