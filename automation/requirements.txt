@@ -3,3 +3,4 @@ feedparser
 python-slugify
 python-dotenv
 Pillow
+groq
