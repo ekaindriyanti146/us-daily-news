@@ -3,11 +3,12 @@
   {{ range .Site.RegularPages }}
   {{ if eq .Type "articles" }}
   
-  <!-- Logic: Hanya ambil artikel yang lebih baru dari 2 hari (48 jam) -->
   {{ if gt .Date.Unix (now.AddDate 0 0 -2).Unix }}
   <url>
-    <!-- .Permalink otomatis menghasilkan URL lengkap (https://...) jika baseURL di hugo.toml benar -->
-    <loc>{{ .Permalink }}</loc>
+    <!-- TEKNIK HARDCODE: Domain ditulis manual + Link Relatif -->
+    <!-- Hasilnya PASTI: https://us-daily-drab.vercel.app/articles/judul... -->
+    <loc>https://us-daily-drab.vercel.app{{ .RelPermalink }}</loc>
+    
     <news:news>
       <news:publication>
         <news:name>{{ .Site.Title }}</news:name>
