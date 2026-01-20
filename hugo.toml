@@ -8,7 +8,9 @@ theme = "neo-news"
   email = "bot@usnews.ai"
 
 [outputs]
-  home = ["HTML", "RSS", "JSON"]
+  home = ["HTML", "RSS", "JSON"] # HTML wajib di urutan pertama!
+  section = ["HTML", "RSS"]
+  page = ["HTML"]
 
 [taxonomies]
   category = "categories"
