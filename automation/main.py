@@ -3,7 +3,6 @@ import json
 import requests
 import feedparser
 import time
-import random
 import re
 from datetime import datetime
 from slugify import slugify
@@ -14,7 +13,7 @@ from PIL import Image
 # --- 1. CONFIGURATION ---
 load_dotenv()
 
-# LOAD MULTI-KEYS
+# LOGIKA MULTI-API KEY
 GROQ_KEYS_RAW = os.getenv("GROQ_API_KEY", "")
 GROQ_API_KEYS = [k.strip() for k in GROQ_KEYS_RAW.split(",") if k.strip()]
 
@@ -22,12 +21,12 @@ if not GROQ_API_KEYS:
     print("❌ FATAL ERROR: API Key Groq Kosong!")
     exit(1)
 
-# TARGET: Google News US
+# Target: Google News US
 TARGET_CONFIG = {
     "rss_url": "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"
 }
 
-# FOLDERS
+# Folders
 CONTENT_DIR = "content/articles"
 IMAGE_DIR = "static/images"
 DATA_DIR = "automation/data"
@@ -73,44 +72,50 @@ def download_and_optimize_image(prompt, filename):
         print(f"❌ Image Error: {e}")
         return False
 
-# --- 4. AI ENGINE (LLAMA 3.3 SPECIALIST) ---
+# --- 4. AI ENGINE (BYPASS MODE) ---
+
+def clean_json_output(text):
+    """Membersihkan output AI dari Markdown code blocks"""
+    try:
+        # Hapus ```json dan ```
+        text = re.sub(r'```json\s*', '', text)
+        text = re.sub(r'```\s*', '', text)
+        
+        # Ambil hanya yang ada di dalam kurung kurawal {}
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            return match.group(0)
+        return text.strip()
+    except:
+        return text
 
 def get_groq_article_seo(title, summary, link, internal_links_map):
     url = "https://api.groq.com/openai/v1/chat/completions"
     
-    # === KONFIGURASI KHUSUS LLAMA 3.3 ===
+    # Model Llama 3.3
     MODEL_NAME = "llama-3.3-70b-versatile"
     
-    # System Prompt KHUSUS agar valid di Llama 3.3
     system_prompt = """
-    You are an expert US Journalist & SEO Specialist.
-    You are a helpful assistant that generates output in JSON format. 
-    Ensure the output is valid JSON with no markdown formatting.
-    
-    RULES:
-    1. Entity Salience: Bold key entities (**Name**).
-    2. Internal Linking: Use provided memory `[keyword](/articles/slug)`.
-    3. External Linking: Include source link at the end.
-    4. Tone: Professional American English.
+    You are an expert Journalist.
+    You MUST output RAW JSON ONLY. Do not use Markdown blocks.
+    Start directly with { and end with }.
     """
 
     user_prompt = f"""
-    SOURCE DATA:
-    Title: {title}
-    Snippet: {summary}
-    Link: {link}
-    Link Memory: {internal_links_map}
+    SOURCE: {title}
+    SUMMARY: {summary}
+    MEMORY: {internal_links_map}
 
-    TASK: Write a news article.
+    Task: Write a news article in Markdown.
     
-    OUTPUT JSON STRUCTURE:
+    REQUIRED JSON FORMAT:
     {{
-        "title": "Clickworthy Headline",
-        "content": "Full article in Markdown with H2/H3",
-        "image_prompt": "Cinematic visual description (no text)",
-        "description": "SEO Meta Description (150 chars)",
-        "category": "Technology/Business/Politics/World",
-        "main_keyword": "Primary Keyword"
+        "title": "Headline",
+        "content": "Article body (use ## for headers)",
+        "image_prompt": "Visual description",
+        "description": "SEO meta",
+        "category": "Technology/Business/Politics",
+        "main_keyword": "Keyword"
     }}
     """
     
@@ -120,29 +125,35 @@ def get_groq_article_seo(title, summary, link, internal_links_map):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ],
-        "temperature": 0.3, # Agak rendah agar JSON stabil
-        "response_format": {"type": "json_object"} # WAJIB untuk Llama 3.3
+        "temperature": 0.5
+        # "response_format": {"type": "json_object"} <--- INI KITA HAPUS TOTAL AGAR TIDAK ERROR 400
     }
 
-    # Rotasi Kunci
     for index, api_key in enumerate(GROQ_API_KEYS):
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         
         try:
-            print(f"🤖 AI Writing using {MODEL_NAME}... (Key #{index+1})")
+            print(f"🤖 AI Writing... (Key #{index+1})")
             response = requests.post(url, headers=headers, json=data)
             
-            # Debugging Error
+            # --- DEBUGGING LENGKAP ---
             if response.status_code != 200:
-                print(f"⚠️ GROQ RESPONSE: {response.text}")
+                # Kita print pesan error aslinya dari Groq biar tahu kenapa
+                print(f"⚠️ GROQ ERROR {response.status_code}: {response.text}")
             
-            if response.status_code == 429: # Rate Limit
+            if response.status_code == 429:
                 print("⚠️ Rate Limit. Switching key...")
+                continue
+            
+            if response.status_code == 400:
+                print("⚠️ Bad Request 400. Skipping key...")
                 continue
                 
             response.raise_for_status()
             
-            return response.json()['choices'][0]['message']['content']
+            # Ambil konten dan bersihkan manual
+            raw_content = response.json()['choices'][0]['message']['content']
+            return clean_json_output(raw_content)
 
         except Exception as e:
             print(f"⚠️ Error Key #{index+1}: {e}")
@@ -150,13 +161,13 @@ def get_groq_article_seo(title, summary, link, internal_links_map):
             
     return None
 
-# --- 5. MAIN EXECUTION ---
+# --- 5. MAIN ---
 def main():
     os.makedirs(CONTENT_DIR, exist_ok=True)
     os.makedirs(IMAGE_DIR, exist_ok=True)
     os.makedirs(DATA_DIR, exist_ok=True)
 
-    print("📡 Fetching Google News US...")
+    print("📡 Fetching News...")
     feed = feedparser.parse(TARGET_CONFIG['rss_url'])
     if not feed.entries: return
 
@@ -175,13 +186,15 @@ def main():
     json_res = get_groq_article_seo(clean_title, entry.summary, entry.link, context)
     
     if not json_res:
-        print("❌ AI Generation Failed.")
+        print("❌ AI Failed (Check Logs).")
         return
 
     try:
         data = json.loads(json_res)
-    except json.JSONDecodeError:
-        print("❌ Invalid JSON Output.")
+    except json.JSONDecodeError as e:
+        print(f"❌ JSON Parse Error: {e}")
+        # Jika error, kita lihat output mentahnya apa
+        print(f"RAW OUTPUT: {json_res[:200]}...") 
         return
 
     img_name = f"{slug}.jpg"
