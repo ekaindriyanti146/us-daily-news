@@ -21,6 +21,3 @@ theme = "neo-news"
   description = "AI-Powered Journalism covering US Top Stories."
   # author = "US News Desk" <--- INI KITA HAPUS (Pindahkan ke blok [author] di atas)
   defaultImage = "/images/default-news.jpg"
-  
-  [params.assets]
-    disableHLJS = true
