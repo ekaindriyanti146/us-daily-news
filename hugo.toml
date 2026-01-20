@@ -1,4 +1,4 @@
-baseURL = "/"  # Ubah ini jadi "/" agar support dynamic preview Vercel
+baseURL = "/"
 languageCode = "en-us"
 title = "US Daily Context"
 theme = "neo-news"
@@ -7,10 +7,13 @@ theme = "neo-news"
   name = "US News Desk"
   email = "bot@usnews.ai"
 
+# --- BAGIAN INI SANGAT PENTING ---
 [outputs]
-  home = ["HTML", "RSS", "JSON"] # HTML wajib di urutan pertama!
-  section = ["HTML", "RSS"]
+  home = ["HTML", "RSS"]    # HTML Wajib di urutan pertama!
   page = ["HTML"]
+  section = ["HTML", "RSS"]
+  taxonomy = ["HTML", "RSS"]
+  term = ["HTML", "RSS"]
 
 [taxonomies]
   category = "categories"
