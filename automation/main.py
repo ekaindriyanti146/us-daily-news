@@ -14,20 +14,20 @@ from PIL import Image
 # --- 1. CONFIGURATION ---
 load_dotenv()
 
-# LOGIKA MULTI-API KEY
+# LOAD MULTI-KEYS
 GROQ_KEYS_RAW = os.getenv("GROQ_API_KEY", "")
 GROQ_API_KEYS = [k.strip() for k in GROQ_KEYS_RAW.split(",") if k.strip()]
 
 if not GROQ_API_KEYS:
-    print("❌ FATAL ERROR: Tidak ada API Key Groq ditemukan!")
+    print("❌ FATAL ERROR: API Key Groq Kosong!")
     exit(1)
 
-# Target Berita
+# TARGET: Google News US
 TARGET_CONFIG = {
     "rss_url": "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"
 }
 
-# Direktori
+# FOLDERS
 CONTENT_DIR = "content/articles"
 IMAGE_DIR = "static/images"
 DATA_DIR = "automation/data"
@@ -73,51 +73,45 @@ def download_and_optimize_image(prompt, filename):
         print(f"❌ Image Error: {e}")
         return False
 
-# --- 4. AI ENGINE (MIXTRAL - LEBIH STABIL) ---
-
-def clean_json(text):
-    """Pembersih Output JSON yang bandel"""
-    try:
-        # Ambil teks di antara kurung kurawal pertama dan terakhir
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        if match: return match.group(0)
-        return text
-    except: return text
+# --- 4. AI ENGINE (LLAMA 3.3 SPECIALIST) ---
 
 def get_groq_article_seo(title, summary, link, internal_links_map):
     url = "https://api.groq.com/openai/v1/chat/completions"
     
-    # GANTI MODEL KE MIXTRAL (Lebih penurut soal JSON)
+    # === KONFIGURASI KHUSUS LLAMA 3.3 ===
     MODEL_NAME = "llama-3.3-70b-versatile"
     
+    # System Prompt KHUSUS agar valid di Llama 3.3
     system_prompt = """
-    You are a professional US Journalist.
-    You MUST respond with a VALID JSON OBJECT only.
-    Do not write any intro text. Start with '{' and end with '}'.
+    You are an expert US Journalist & SEO Specialist.
+    You are a helpful assistant that generates output in JSON format. 
+    Ensure the output is valid JSON with no markdown formatting.
     
-    JSON STRUCTURE REQUIRED:
-    {
-        "title": "Clickworthy Headline",
-        "content": "Full Article in Markdown",
-        "image_prompt": "Visual description",
-        "description": "SEO Description",
-        "category": "Technology/Business/Politics",
-        "main_keyword": "Focus keyword"
-    }
+    RULES:
+    1. Entity Salience: Bold key entities (**Name**).
+    2. Internal Linking: Use provided memory `[keyword](/articles/slug)`.
+    3. External Linking: Include source link at the end.
+    4. Tone: Professional American English.
     """
 
     user_prompt = f"""
-    NEWS DATA:
+    SOURCE DATA:
     Title: {title}
     Snippet: {summary}
     Link: {link}
-    Memory: {internal_links_map}
+    Link Memory: {internal_links_map}
+
+    TASK: Write a news article.
     
-    INSTRUCTIONS:
-    1. Write a 500-word article.
-    2. Bold key entities.
-    3. Use Markdown.
-    4. Link to source at the end.
+    OUTPUT JSON STRUCTURE:
+    {{
+        "title": "Clickworthy Headline",
+        "content": "Full article in Markdown with H2/H3",
+        "image_prompt": "Cinematic visual description (no text)",
+        "description": "SEO Meta Description (150 chars)",
+        "category": "Technology/Business/Politics/World",
+        "main_keyword": "Primary Keyword"
+    }}
     """
     
     data = {
@@ -126,43 +120,43 @@ def get_groq_article_seo(title, summary, link, internal_links_map):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ],
-        "temperature": 0.5
-        # Kita hapus response_format json_object agar tidak error 400
+        "temperature": 0.3, # Agak rendah agar JSON stabil
+        "response_format": {"type": "json_object"} # WAJIB untuk Llama 3.3
     }
 
+    # Rotasi Kunci
     for index, api_key in enumerate(GROQ_API_KEYS):
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         
         try:
-            print(f"🤖 AI Writing... (Key #{index+1})")
+            print(f"🤖 AI Writing using {MODEL_NAME}... (Key #{index+1})")
             response = requests.post(url, headers=headers, json=data)
             
-            # DEBUGGING: Jika error, tampilkan pesan asli dari Groq
+            # Debugging Error
             if response.status_code != 200:
-                print(f"⚠️ Status {response.status_code}: {response.text}")
+                print(f"⚠️ GROQ RESPONSE: {response.text}")
             
-            if response.status_code == 429:
+            if response.status_code == 429: # Rate Limit
                 print("⚠️ Rate Limit. Switching key...")
                 continue
                 
             response.raise_for_status()
             
-            content = response.json()['choices'][0]['message']['content']
-            return clean_json(content)
+            return response.json()['choices'][0]['message']['content']
 
         except Exception as e:
-            print(f"⚠️ Error: {e}")
+            print(f"⚠️ Error Key #{index+1}: {e}")
             continue
             
     return None
 
-# --- 5. MAIN ---
+# --- 5. MAIN EXECUTION ---
 def main():
     os.makedirs(CONTENT_DIR, exist_ok=True)
     os.makedirs(IMAGE_DIR, exist_ok=True)
     os.makedirs(DATA_DIR, exist_ok=True)
 
-    print("📡 Fetching News...")
+    print("📡 Fetching Google News US...")
     feed = feedparser.parse(TARGET_CONFIG['rss_url'])
     if not feed.entries: return
 
@@ -181,13 +175,13 @@ def main():
     json_res = get_groq_article_seo(clean_title, entry.summary, entry.link, context)
     
     if not json_res:
-        print("❌ AI Failed all keys.")
+        print("❌ AI Generation Failed.")
         return
 
     try:
         data = json.loads(json_res)
-    except:
-        print("❌ Invalid JSON from AI.")
+    except json.JSONDecodeError:
+        print("❌ Invalid JSON Output.")
         return
 
     img_name = f"{slug}.jpg"
