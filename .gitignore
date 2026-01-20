@@ -1,0 +1,20 @@
+# System files
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+automation/data/  # Database memori lokal (opsional, tapi lebih baik start fresh di server)
+.env              # PENTING: Jangan upload API Key lokal Anda!
+
+# Node / Hugo
+node_modules/
+public/
+resources/
+.hugo_build.lock
+
+# Editor
+.vscode/
+.idea/

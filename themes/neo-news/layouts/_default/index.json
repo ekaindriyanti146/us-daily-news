@@ -1,0 +1,19 @@
+{{- /* Buat variabel list kosong */ -}}
+{{- $list := slice -}}
+
+{{- /* Loop semua artikel */ -}}
+{{- range (where .Site.RegularPages "Type" "articles") -}}
+  {{- /* Masukkan data ke dalam dictionary (objek sementara) */ -}}
+  {{- $item := dict 
+    "title" .Title 
+    "permalink" .Permalink 
+    "summary" (.Description | default .Summary | plainify) 
+    "category" (index .Params.categories 0 | default "News") 
+  -}}
+  
+  {{- /* Tambahkan objek ke list */ -}}
+  {{- $list = $list | append $item -}}
+{{- end -}}
+
+{{- /* Ubah list menjadi JSON valid secara otomatis */ -}}
+{{- $list | jsonify -}}

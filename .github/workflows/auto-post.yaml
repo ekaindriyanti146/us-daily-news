@@ -1,0 +1,29 @@
+name: Auto Post US News
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Install Deps
+        run: pip install -r automation/requirements.txt
+      - name: Run Script
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: python automation/main.py
+      - name: Commit
+        run: |
+          git config user.name "Bot"
+          git config user.email "bot@news.ai"
+          git add .
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto News" && git push)

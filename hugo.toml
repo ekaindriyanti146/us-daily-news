@@ -1,0 +1,17 @@
+baseURL = "/" # Fallback relative
+languageCode = "en-us"
+title = "US Daily Context"
+theme = "neo-news"
+
+[outputs]
+  home = ["HTML", "RSS", "JSON"] # JSON wajib untuk Search
+
+[taxonomies]
+  category = "categories"
+  tag = "tags"
+  author = "authors"
+
+[params]
+  description = "AI-Powered Journalism covering US Top Stories."
+  author = "US News Desk"
+  defaultImage = "/images/default-news.jpg"
