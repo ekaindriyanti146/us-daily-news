@@ -1,10 +1,8 @@
-baseURL = "/"
+baseURL = "/"  # Ubah ini jadi "/" agar support dynamic preview Vercel
 languageCode = "en-us"
 title = "US Daily Context"
 theme = "neo-news"
 
-# --- PERBAIKAN UTAMA DI SINI ---
-# Author harus dibuat blok sendiri seperti ini agar RSS tidak Error
 [author]
   name = "US News Desk"
   email = "bot@usnews.ai"
@@ -15,9 +13,7 @@ theme = "neo-news"
 [taxonomies]
   category = "categories"
   tag = "tags"
-  # author = "authors" # Kita matikan dulu taxonomy author agar tidak bentrok
 
 [params]
   description = "AI-Powered Journalism covering US Top Stories."
-  # author = "US News Desk" <--- INI KITA HAPUS (Pindahkan ke blok [author] di atas)
   defaultImage = "/images/default-news.jpg"
