@@ -1,66 +1,87 @@
 {{ define "main" }}
+<div class="container mx-auto px-4 py-8">
+    
+    <!-- Date Header -->
+    <div class="flex items-center justify-between border-b-2 border-black pb-4 mb-8">
+        <h1 class="text-xl font-bold font-serif text-gray-900">Today's Headlines</h1>
+        <p class="text-sm font-medium text-gray-500">{{ now.Format "Monday, January 2, 2006" }}</p>
+    </div>
 
-<!-- DEFINISI VARIABEL: Ambil artikel dari folder 'articles' -->
-<!-- Menggunakan 'Section' lebih akurat daripada 'Type' untuk folder root -->
-{{ $news := where .Site.RegularPages "Section" "articles" }}
-
-<!-- CEK: Apakah ada artikel? -->
-{{ if gt (len $news) 0 }}
-
-    <!-- Hero: Postingan Terbaru (Index ke-0) -->
-    {{ range first 1 $news }}
-    <article class="mb-12 group relative h-[500px] rounded-2xl overflow-hidden shadow-xl">
-        <a href="{{ .Permalink }}" class="block w-full h-full">
-            {{ if .Params.featured_image }}
-            <img src="{{ .Params.featured_image }}" class="absolute inset-0 w-full h-full object-cover transition duration-700 group-hover:scale-105">
-            {{ end }}
-            <div class="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent"></div>
-            <div class="absolute bottom-0 left-0 p-8 md:p-12 text-white max-w-4xl">
-                <!-- Safety Check: Hanya tampilkan kategori jika ada -->
-                {{ if .Params.categories }}
-                <span class="bg-blue-600 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-4 inline-block">
-                    {{ index .Params.categories 0 }}
-                </span>
-                {{ end }}
-                <h1 class="text-4xl md:text-6xl font-bold font-serif leading-tight mb-4">{{ .Title }}</h1>
-                <p class="text-gray-200 line-clamp-2 md:text-lg">{{ .Description }}</p>
-            </div>
-        </a>
-    </article>
-    {{ end }}
-
-    <!-- Grid: Postingan Berikutnya (Index ke-1 dst) -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-        {{ range after 1 $news }}
-        <article class="bg-white rounded-xl shadow-sm overflow-hidden hover:shadow-md transition border border-gray-100 flex flex-col h-full">
-            <a href="{{ .Permalink }}" class="block h-48 overflow-hidden">
-                {{ if .Params.featured_image }}
-                <img src="{{ .Params.featured_image }}" alt="{{ .Title }}" class="w-full h-full object-cover transition hover:scale-105">
-                {{ end }}
-            </a>
-            <div class="p-6 flex flex-col flex-grow">
-                <div class="flex items-center text-xs text-gray-500 mb-3 space-x-2">
-                    {{ if .Params.categories }}
-                    <span class="font-bold text-blue-600 uppercase">{{ index .Params.categories 0 }}</span>
-                    <span>&bull;</span>
+    <!-- MAIN NEWS GRID -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 mb-16">
+        
+        <!-- HERO SECTION (Artikel Terbaru #1) -->
+        {{ range first 1 (where .Site.RegularPages "Section" "articles") }}
+        <div class="lg:col-span-8 group cursor-pointer">
+            <div class="relative overflow-hidden rounded-xl shadow-lg aspect-[16/9]">
+                <a href="{{ .Permalink }}">
+                    {{ if .Params.featured_image }}
+                    <img src="{{ .Params.featured_image }}" alt="{{ .Title }}" 
+                         class="absolute inset-0 w-full h-full object-cover transition duration-700 group-hover:scale-105">
                     {{ end }}
-                    <time>{{ .Date.Format "Jan 02, 2006" }}</time>
-                </div>
-                <h2 class="text-xl font-bold mb-3 font-serif leading-snug flex-grow">
-                    <a href="{{ .Permalink }}" class="hover:text-blue-700">{{ .Title }}</a>
-                </h2>
-                <p class="text-gray-600 text-sm line-clamp-3 mb-4">{{ .Description }}</p>
+                    <div class="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent opacity-90"></div>
+                    <div class="absolute bottom-0 left-0 p-8">
+                        <span class="bg-brand-accent text-white text-xs font-bold px-3 py-1 rounded-full uppercase mb-3 inline-block">
+                            {{ index .Params.categories 0 | default "News" }}
+                        </span>
+                        <h2 class="text-3xl md:text-5xl font-bold text-white font-serif leading-tight mb-2 group-hover:underline decoration-brand-accent underline-offset-4">
+                            {{ .Title }}
+                        </h2>
+                        <p class="text-gray-200 line-clamp-2 md:text-lg hidden md:block">
+                            {{ .Summary | truncate 150 }}
+                        </p>
+                    </div>
+                </a>
             </div>
+        </div>
+        {{ end }}
+
+        <!-- SIDEBAR HIGHLIGHTS (Artikel #2 & #3) -->
+        <div class="lg:col-span-4 flex flex-col gap-6">
+            {{ range first 2 (after 1 (where .Site.RegularPages "Section" "articles")) }}
+            <article class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col h-full group hover:shadow-md transition">
+                <a href="{{ .Permalink }}" class="block h-48 overflow-hidden relative">
+                    {{ if .Params.featured_image }}
+                    <img src="{{ .Params.featured_image }}" class="w-full h-full object-cover transition duration-500 group-hover:scale-105">
+                    {{ end }}
+                </a>
+                <div class="p-5">
+                    <div class="flex items-center space-x-2 mb-2">
+                        <span class="text-xs font-bold text-brand-accent uppercase">{{ index .Params.categories 0 }}</span>
+                        <span class="text-gray-300">|</span>
+                        <span class="text-xs text-gray-500">{{ .Date.Format "Jan 02" }}</span>
+                    </div>
+                    <h3 class="text-xl font-bold font-serif leading-snug group-hover:text-brand-accent transition">
+                        <a href="{{ .Permalink }}">{{ .Title }}</a>
+                    </h3>
+                </div>
+            </article>
+            {{ end }}
+        </div>
+    </div>
+
+    <!-- MORE NEWS (Grid 3 Kolom) -->
+    <h3 class="text-2xl font-bold font-serif border-l-4 border-brand-accent pl-4 mb-6">Latest Stories</h3>
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-12">
+        {{ range first 9 (after 3 (where .Site.RegularPages "Section" "articles")) }}
+        <article class="flex flex-col group border-b border-gray-100 pb-8">
+            <a href="{{ .Permalink }}" class="block overflow-hidden rounded-lg mb-4 aspect-video">
+                <img src="{{ .Params.featured_image }}" class="w-full h-full object-cover transition duration-500 group-hover:scale-105" loading="lazy">
+            </a>
+            <div class="flex items-center text-xs text-gray-500 mb-2 space-x-2">
+                <span class="font-bold text-gray-900 uppercase">{{ index .Params.categories 0 }}</span>
+                <span>&bull;</span>
+                <time>{{ .Date.Format "Jan 02, 2006" }}</time>
+            </div>
+            <h2 class="text-xl font-bold font-serif text-gray-900 leading-tight mb-3 group-hover:text-brand-accent transition">
+                <a href="{{ .Permalink }}">{{ .Title }}</a>
+            </h2>
+            <p class="text-gray-600 text-sm line-clamp-3 leading-relaxed">
+                {{ .Summary }}
+            </p>
         </article>
         {{ end }}
     </div>
 
-{{ else }}
-    <!-- DEBUG: Pesan ini akan muncul jika artikel tidak ditemukan -->
-    <div class="text-center py-20 bg-gray-100 rounded-lg">
-        <h2 class="text-2xl font-bold text-red-600">No Articles Found</h2>
-        <p class="text-gray-600">Please check 'netlify.toml' has '--buildFuture' flag.</p>
-    </div>
-{{ end }}
-
+</div>
 {{ end }}

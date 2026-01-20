@@ -1,19 +1,41 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="scroll-smooth">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ if .IsHome }}{{ .Site.Title }}{{ else }}{{ .Title }} | {{ .Site.Title }}{{ end }}</title>
     
-    <!-- PENTING: Kita pakai CDN Tailwind saja. -->
-    <!-- Tidak perlu PostCSS, tidak perlu Build, tidak ada Error. -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    
     <meta name="description" content="{{ if .IsHome }}{{ .Site.Params.description }}{{ else }}{{ .Summary | default .Site.Params.description }}{{ end }}">
-</head>
-<body class="bg-gray-50 text-gray-800 font-sans antialiased flex flex-col min-h-screen">
 
-    <!-- Header Partial -->
+    <!-- 1. Google Fonts: Merriweather (Klasik) & Inter (Modern) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Merriweather:ital,wght@0,300;0,400;0,700;0,900;1,400&display=swap" rel="stylesheet">
+    
+    <!-- 2. Tailwind Config & Plugin -->
+    <script src="https://cdn.tailwindcss.com?plugins=typography,line-clamp"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        serif: ['Merriweather', 'serif'],
+                    },
+                    colors: {
+                        brand: {
+                            blue: '#0F172A', // Slate 900
+                            accent: '#2563EB', // Blue 600
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-gray-50 text-gray-900 font-sans antialiased flex flex-col min-h-screen">
+
+    <!-- Header -->
     {{ partial "header.html" . }}
 
     <!-- Main Content -->
@@ -21,7 +43,7 @@
         {{ block "main" . }}{{ end }}
     </main>
 
-    <!-- Footer Partial -->
+    <!-- Footer -->
     {{ partial "footer.html" . }}
 
 </body>
