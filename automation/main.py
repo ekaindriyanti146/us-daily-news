@@ -88,7 +88,7 @@ def get_groq_article_seo(title, summary, link, internal_links_map):
     url = "https://api.groq.com/openai/v1/chat/completions"
     
     # GANTI MODEL KE MIXTRAL (Lebih penurut soal JSON)
-    MODEL_NAME = "mixtral-8x7b-32768"
+    MODEL_NAME = "llama-3.3-70b-versatile"
     
     system_prompt = """
     You are a professional US Journalist.
