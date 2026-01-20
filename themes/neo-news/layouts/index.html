@@ -1,66 +1,40 @@
 {{ define "main" }}
+<div class="container mx-auto px-4 py-8">
+    
+    <!-- Hero Section -->
+    <div class="mb-8 text-center border-b pb-8">
+        <h1 class="text-4xl font-bold text-gray-900">Top Stories</h1>
+        <p class="text-gray-600 mt-2">{{ now.Format "Monday, January 2, 2006" }}</p>
+    </div>
 
-<!-- DEFINISI VARIABEL: Ambil artikel dari folder 'articles' -->
-<!-- Menggunakan 'Section' lebih akurat daripada 'Type' untuk folder root -->
-{{ $news := where .Site.RegularPages "Section" "articles" }}
-
-<!-- CEK: Apakah ada artikel? -->
-{{ if gt (len $news) 0 }}
-
-    <!-- Hero: Postingan Terbaru (Index ke-0) -->
-    {{ range first 1 $news }}
-    <article class="mb-12 group relative h-[500px] rounded-2xl overflow-hidden shadow-xl">
-        <a href="{{ .Permalink }}" class="block w-full h-full">
+    <!-- Grid Artikel -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <!-- Ambil semua halaman regular -->
+        {{ range first 9 .Site.RegularPages }}
+        <article class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-xl transition-shadow duration-300">
             {{ if .Params.featured_image }}
-            <img src="{{ .Params.featured_image }}" class="absolute inset-0 w-full h-full object-cover transition duration-700 group-hover:scale-105">
-            {{ end }}
-            <div class="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent"></div>
-            <div class="absolute bottom-0 left-0 p-8 md:p-12 text-white max-w-4xl">
-                <!-- Safety Check: Hanya tampilkan kategori jika ada -->
-                {{ if .Params.categories }}
-                <span class="bg-blue-600 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-4 inline-block">
-                    {{ index .Params.categories 0 }}
-                </span>
-                {{ end }}
-                <h1 class="text-4xl md:text-6xl font-bold font-serif leading-tight mb-4">{{ .Title }}</h1>
-                <p class="text-gray-200 line-clamp-2 md:text-lg">{{ .Description }}</p>
-            </div>
-        </a>
-    </article>
-    {{ end }}
-
-    <!-- Grid: Postingan Berikutnya (Index ke-1 dst) -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-        {{ range after 1 $news }}
-        <article class="bg-white rounded-xl shadow-sm overflow-hidden hover:shadow-md transition border border-gray-100 flex flex-col h-full">
             <a href="{{ .Permalink }}" class="block h-48 overflow-hidden">
-                {{ if .Params.featured_image }}
-                <img src="{{ .Params.featured_image }}" alt="{{ .Title }}" class="w-full h-full object-cover transition hover:scale-105">
-                {{ end }}
+                <img src="{{ .Params.featured_image }}" alt="{{ .Title }}" class="w-full h-full object-cover">
             </a>
-            <div class="p-6 flex flex-col flex-grow">
-                <div class="flex items-center text-xs text-gray-500 mb-3 space-x-2">
-                    {{ if .Params.categories }}
-                    <span class="font-bold text-blue-600 uppercase">{{ index .Params.categories 0 }}</span>
-                    <span>&bull;</span>
-                    {{ end }}
+            {{ end }}
+            
+            <div class="p-4">
+                <div class="flex items-center text-xs text-gray-500 mb-2">
+                    <span class="font-bold text-blue-600 uppercase mr-2">{{ index .Params.categories 0 | default "News" }}</span>
                     <time>{{ .Date.Format "Jan 02, 2006" }}</time>
                 </div>
-                <h2 class="text-xl font-bold mb-3 font-serif leading-snug flex-grow">
-                    <a href="{{ .Permalink }}" class="hover:text-blue-700">{{ .Title }}</a>
+                <h2 class="text-xl font-bold leading-tight mb-2">
+                    <a href="{{ .Permalink }}" class="hover:text-blue-600 text-gray-900">
+                        {{ .Title }}
+                    </a>
                 </h2>
-                <p class="text-gray-600 text-sm line-clamp-3 mb-4">{{ .Description }}</p>
+                <p class="text-gray-600 text-sm line-clamp-3">
+                    {{ .Summary | truncate 120 }}
+                </p>
             </div>
         </article>
         {{ end }}
     </div>
 
-{{ else }}
-    <!-- DEBUG: Pesan ini akan muncul jika artikel tidak ditemukan -->
-    <div class="text-center py-20 bg-gray-100 rounded-lg">
-        <h2 class="text-2xl font-bold text-red-600">No Articles Found</h2>
-        <p class="text-gray-600">Please check 'netlify.toml' has '--buildFuture' flag.</p>
-    </div>
-{{ end }}
-
+</div>
 {{ end }}
