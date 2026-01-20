@@ -9,7 +9,7 @@ title = "US Daily Context"
 
 # --- BAGIAN INI SANGAT PENTING ---
 [outputs]
-  home = ["HTML", "RSS"]    # HTML Wajib di urutan pertama!
+  home = ["HTML", "RSS","Sitemap"]    # HTML Wajib di urutan pertama!
   page = ["HTML"]
   section = ["HTML", "RSS"]
   taxonomy = ["HTML", "RSS"]
