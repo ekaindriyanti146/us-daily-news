@@ -1,17 +1,26 @@
-baseURL = "/" # Fallback relative
+baseURL = "/"
 languageCode = "en-us"
 title = "US Daily Context"
 theme = "neo-news"
 
+# --- PERBAIKAN UTAMA DI SINI ---
+# Author harus dibuat blok sendiri seperti ini agar RSS tidak Error
+[author]
+  name = "US News Desk"
+  email = "bot@usnews.ai"
+
 [outputs]
-  home = ["HTML", "RSS", "JSON"] # JSON wajib untuk Search
+  home = ["HTML", "RSS", "JSON"]
 
 [taxonomies]
   category = "categories"
   tag = "tags"
-  author = "authors"
+  # author = "authors" # Kita matikan dulu taxonomy author agar tidak bentrok
 
 [params]
   description = "AI-Powered Journalism covering US Top Stories."
-  author = "US News Desk"
+  # author = "US News Desk" <--- INI KITA HAPUS (Pindahkan ke blok [author] di atas)
   defaultImage = "/images/default-news.jpg"
+  
+  [params.assets]
+    disableHLJS = true
