@@ -1,7 +1,7 @@
 baseURL = "/"
 languageCode = "en-us"
 title = "US Daily Context"
-theme = "neo-news"
+# theme = "neo-news"
 
 [author]
   name = "US News Desk"
