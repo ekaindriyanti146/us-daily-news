@@ -3,36 +3,31 @@ import json
 import requests
 import feedparser
 import time
-import random
 import re
 from datetime import datetime
 from slugify import slugify
-from dotenv import load_dotenv
 from io import BytesIO
 from PIL import Image
-from groq import Groq, APIError, RateLimitError, BadRequestError # Library Resmi
+from groq import Groq, APIError, RateLimitError, BadRequestError # SDK Resmi
 
-# --- 1. CONFIGURATION ---
-load_dotenv()
-
-GROQ_KEYS_RAW = os.getenv("GROQ_API_KEY", "")
+# --- CONFIGURATION ---
+# Tidak perlu load_dotenv di GitHub Actions karena pakai Secrets
+# GROQ_API_KEY diambil dari Environment Variable
+GROQ_KEYS_RAW = os.environ.get("GROQ_API_KEY", "")
 GROQ_API_KEYS = [k.strip() for k in GROQ_KEYS_RAW.split(",") if k.strip()]
 
 if not GROQ_API_KEYS:
     print("❌ FATAL ERROR: API Key Groq Kosong!")
     exit(1)
 
-TARGET_CONFIG = {
-    "rss_url": "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"
-}
-
+TARGET_CONFIG = {"rss_url": "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"}
 CONTENT_DIR = "content/articles"
 IMAGE_DIR = "static/images"
 DATA_DIR = "automation/data"
 MEMORY_FILE = f"{DATA_DIR}/link_memory.json"
 AUTHOR_NAME = "US News Desk"
 
-# --- 2. MEMORY SYSTEM ---
+# --- MEMORY SYSTEM ---
 def load_link_memory():
     if not os.path.exists(MEMORY_FILE): return {}
     try:
@@ -51,11 +46,10 @@ def get_internal_links_context():
     items = list(memory.items())[-50:] 
     return json.dumps(dict(items))
 
-# --- 3. IMAGE ENGINE ---
+# --- IMAGE ENGINE ---
 def download_and_optimize_image(prompt, filename):
     safe_prompt = prompt.replace(" ", "%20")[:150]
     image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1280&height=720&nologo=true&model=flux"
-    
     print(f"🎨 Generating Image: {filename}...")
     try:
         response = requests.get(image_url, timeout=30)
@@ -71,43 +65,29 @@ def download_and_optimize_image(prompt, filename):
         print(f"❌ Image Error: {e}")
         return False
 
-# --- 4. AI ENGINE (OFFICIAL GROQ SDK) ---
-
+# --- AI ENGINE (OFFICIAL GROQ SDK) ---
 def clean_html(raw_html):
-    """Membersihkan tag HTML dari snippet Google News agar tidak merusak JSON"""
     cleanr = re.compile('<.*?>')
-    cleantext = re.sub(cleanr, '', raw_html)
-    return cleantext
+    return re.sub(cleanr, '', raw_html)
 
 def get_groq_article_seo(title, summary, link, internal_links_map):
-    # Bersihkan input
     clean_summary = clean_html(summary)
+    MODEL_NAME = "llama-3.3-70b-versatile" # Model Terbaru
     
-    # Model yang Anda minta (Dokumentasi resmi)
-    MODEL_NAME = "llama-3.3-70b-versatile"
-    
-    system_prompt = """
-    You are a US Journalist.
-    Output JSON ONLY. No markdown blocks.
-    Structure: {"title": "...", "content": "Markdown...", "image_prompt": "...", "description": "...", "category": "...", "main_keyword": "..."}
-    """
+    system_prompt = """You are a US Journalist. Output JSON ONLY. 
+    Structure: {"title": "...", "content": "Markdown...", "image_prompt": "...", "description": "...", "category": "...", "main_keyword": "..."}"""
 
-    user_prompt = f"""
-    News: {title}
+    user_prompt = f"""News: {title}
     Summary: {clean_summary}
-    Internal Links: {internal_links_map}
-    
-    Task: Write a full article in Markdown format with bold entities and source link.
-    """
+    Links: {internal_links_map}
+    Task: Write full article in Markdown."""
 
-    # Rotasi Kunci dengan Library Resmi
     for index, api_key in enumerate(GROQ_API_KEYS):
         try:
+            # Perhatikan kalimat print ini beda dengan log error Anda
             print(f"🤖 AI Writing with {MODEL_NAME}... (Key #{index+1})")
             
-            # Inisialisasi Client Resmi
             client = Groq(api_key=api_key)
-            
             completion = client.chat.completions.create(
                 model=MODEL_NAME,
                 messages=[
@@ -115,34 +95,21 @@ def get_groq_article_seo(title, summary, link, internal_links_map):
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.5,
-                max_tokens=3000,
-                top_p=1,
-                stream=False,
-                response_format={"type": "json_object"} # SDK Resmi support ini dengan baik
+                response_format={"type": "json_object"}
             )
-            
             return completion.choices[0].message.content
 
         except BadRequestError as e:
-            # INI DIA PENYEBABNYA - Kita tangkap error 400 dan print detailnya
+            # Ini akan menangkap error 400 dan memberi tahu alasannya
             print(f"⚠️ GROQ 400 ERROR (Key #{index+1}): {e.body}")
-            continue # Coba key lain (mungkin masalah akun)
-
-        except RateLimitError:
-            print(f"⚠️ Rate Limit (Key #{index+1}). Switching...")
             continue
-            
-        except APIError as e:
-            print(f"⚠️ API Error (Key #{index+1}): {e}")
-            continue
-
         except Exception as e:
-            print(f"⚠️ Unknown Error (Key #{index+1}): {e}")
+            print(f"⚠️ Error (Key #{index+1}): {e}")
             continue
             
     return None
 
-# --- 5. MAIN ---
+# --- MAIN ---
 def main():
     os.makedirs(CONTENT_DIR, exist_ok=True)
     os.makedirs(IMAGE_DIR, exist_ok=True)
@@ -167,13 +134,13 @@ def main():
     json_res = get_groq_article_seo(clean_title, entry.summary, entry.link, context)
     
     if not json_res:
-        print("❌ AI Failed. Cek log error di atas.")
+        print("❌ AI Failed. Cek log.")
         return
 
     try:
         data = json.loads(json_res)
-    except json.JSONDecodeError as e:
-        print(f"❌ JSON Error: {e}")
+    except json.JSONDecodeError:
+        print(f"❌ JSON Error. Raw: {json_res[:100]}")
         return
 
     img_name = f"{slug}.jpg"
