@@ -5,9 +5,9 @@
   
   {{ if gt .Date.Unix (now.AddDate 0 0 -2).Unix }}
   <url>
-    <!-- TEKNIK HARDCODE: Domain ditulis manual + Link Relatif -->
-    <!-- Hasilnya PASTI: https://us-daily-drab.vercel.app/articles/judul... -->
-    <loc>https://us-daily-drab.vercel.app{{ .RelPermalink }}</loc>
+    <!-- CARA BENAR: Menggunakan .Permalink (Otomatis & Dinamis) -->
+    <!-- Hugo akan mengisi ini berdasarkan Environment Variable -->
+    <loc>{{ .Permalink }}</loc>
     
     <news:news>
       <news:publication>
