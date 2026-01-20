@@ -4,6 +4,7 @@ import requests
 import feedparser
 import time
 import re
+import random
 from datetime import datetime
 from slugify import slugify
 from io import BytesIO
@@ -18,17 +19,13 @@ if not GROQ_API_KEYS:
     print("❌ FATAL ERROR: API Key Groq Kosong!")
     exit(1)
 
-# Target Google News US
 TARGET_CONFIG = {"rss_url": "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"}
-
 CONTENT_DIR = "content/articles"
 IMAGE_DIR = "static/images"
 DATA_DIR = "automation/data"
 MEMORY_FILE = f"{DATA_DIR}/link_memory.json"
 AUTHOR_NAME = "US News Desk"
-
-# TARGET JUMLAH ARTIKEL PER JALAN (CRON)
-TARGET_ARTICLE_COUNT = 5 
+TARGET_ARTICLE_COUNT = 5
 
 # --- MEMORY SYSTEM ---
 def load_link_memory():
@@ -46,83 +43,115 @@ def save_link_to_memory(keyword, slug):
 
 def get_internal_links_context():
     memory = load_link_memory()
-    items = list(memory.items())[-50:] 
+    # Ambil 30 link acak agar konteks selalu segar
+    items = list(memory.items())
+    if len(items) > 30:
+        items = random.sample(items, 30)
     return json.dumps(dict(items))
 
-# --- IMAGE ENGINE ---
+# --- ROBUST IMAGE ENGINE (RETRY MODE) ---
 def download_and_optimize_image(prompt, filename):
-    # Prompt gambar dipersingkat agar tidak error di URL
-    safe_prompt = prompt.replace(" ", "%20")[:180] 
-    image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1280&height=720&nologo=true&model=flux"
-    print(f"   🎨 Generating Image...")
-    try:
-        response = requests.get(image_url, timeout=30)
-        if response.status_code == 200:
-            img = Image.open(BytesIO(response.content))
-            img = img.resize((1280, 720), Image.Resampling.LANCZOS)
-            output_path = f"{IMAGE_DIR}/{filename}"
-            img.convert("RGB").save(output_path, "JPEG", quality=75, optimize=True)
-            return True
-        return False
-    except Exception as e:
-        print(f"   ❌ Image Error: {e}")
-        return False
+    safe_prompt = prompt.replace(" ", "%20")[:200]
+    # Menggunakan model Flux Realism
+    image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1280&height=720&nologo=true&model=flux-realism"
+    
+    # RETRY LOGIC (3x Percobaan)
+    for attempt in range(3):
+        try:
+            print(f"   🎨 Generating Image (Attempt {attempt+1})...")
+            response = requests.get(image_url, timeout=60) # Naikkan timeout ke 60s
+            if response.status_code == 200:
+                img = Image.open(BytesIO(response.content))
+                img = img.resize((1280, 720), Image.Resampling.LANCZOS)
+                output_path = f"{IMAGE_DIR}/{filename}"
+                img.convert("RGB").save(output_path, "JPEG", quality=80, optimize=True)
+                return True
+        except Exception as e:
+            print(f"      ⚠️ Image fail: {e}")
+            time.sleep(5) # Tunggu 5 detik sebelum coba lagi
+    
+    print("   ❌ Image failed after 3 attempts.")
+    return False
 
-# --- AI ENGINE (OFFICIAL GROQ SDK) ---
-def clean_html(raw_html):
-    cleanr = re.compile('<.*?>')
-    return re.sub(cleanr, '', raw_html)
+# --- AI ENGINE (TEXT PARSER) ---
+# Kita tidak pakai JSON untuk konten panjang, tapi Custom Separator agar aman
+def parse_ai_response(text):
+    try:
+        # Pisahkan Header dan Body
+        parts = text.split("|||BODY_START|||")
+        if len(parts) < 2: return None
+        
+        json_part = parts[0].strip()
+        body_part = parts[1].strip()
+        
+        # Bersihkan JSON dari markdown formatting ```json ... ```
+        json_part = re.sub(r'```json\s*', '', json_part)
+        json_part = re.sub(r'```', '', json_part)
+        
+        data = json.loads(json_part)
+        data['content'] = body_part
+        return data
+    except Exception as e:
+        print(f"   ❌ Parse Error: {e}")
+        return None
 
 def get_groq_article_seo(title, summary, link, internal_links_map):
-    clean_summary = clean_html(summary)
     MODEL_NAME = "llama-3.3-70b-versatile"
     
-    # PROMPT KHUSUS AGAR ARTIKEL PANJANG (1000+ KATA)
-    # Kita memaksa AI membagi konten menjadi banyak sub-bagian
+    # PROMPT EEAT 2026 (STRUCTURED DATA & DEPTH)
     system_prompt = """
-    You are a Senior US Political & Economic Analyst. 
-    Your Task: Write a comprehensive, deep-dive article (minimum 1000 words).
+    You are a Pulitzer-winning Senior US Journalist.
     
-    GUIDELINES:
-    1. Output JSON ONLY. Format: {"title": "...", "content": "markdown...", "image_prompt": "...", "description": "...", "category": "...", "main_keyword": "..."}
-    2. Tone: Professional, investigative, objective, and authoritative.
-    3. Structure (Must be included in 'content' Markdown):
-       - Introduction (Hook the reader)
-       - Historical Context (Background info)
-       - Detailed Analysis (The core of the news)
-       - Key Players & Reactions (Quotes/Perspectives)
-       - Economic/Political Implications (Future outlook)
-       - Conclusion
-    4. Internal Linking: Use the provided 'Links' JSON to insert markdown links [keyword](/articles/slug) NATURALLY in the text.
-    5. Formatting: Use H2 (##) for section headers. Use bold for entities.
+    TASK: Write a highly authoritative, deep-dive news analysis (1200+ words).
+    
+    OUTPUT FORMAT (STRICT):
+    {JSON_METADATA}
+    |||BODY_START|||
+    [Markdown Article Content]
+
+    METADATA JSON FIELDS:
+    - title: (Clickbait but factual)
+    - description: (SEO meta description, 150 chars)
+    - category: (One word: Politics, Business, Tech, World, Health)
+    - main_keyword: (Focus keyword)
+    - image_prompt: (Cinematic, photorealistic description, 16:9)
+
+    ARTICLE STRUCTURE (Markdown):
+    1. **Key Takeaways** (Bulleted list at the top, bold important stats).
+    2. **Introduction** (The Hook: What happened, Who, When, Where).
+    3. **The Deep Dive** (Detailed background, context).
+    4. **Critical Analysis** (Why this matters? connect to US Economy/Policy).
+    5. **Expert Opinions** (Simulate relevant quotes from officials/experts).
+    6. **Future Outlook** (What happens next?).
+    
+    SEO RULES:
+    - Use H2 (##) and H3 (###) for hierarchy.
+    - **BOLD** important entities (Names, Organizations, Cities).
+    - Insert internal links from this list naturally: {LINKS} -> Syntax: [Keyword](/articles/slug).
+    - Do NOT use phrases like "In conclusion" or "In summary". Use "Final Thoughts" or "Looking Ahead".
     """
 
     user_prompt = f"""
-    News Title: {title}
-    Source Summary: {clean_summary}
-    Existing Internal Links: {internal_links_map}
+    News Event: {title}
+    Context: {summary}
+    Internal Links Available: {internal_links_map}
     
-    INSTRUCTION: 
-    Expand this news into a full feature story. Do not be brief. 
-    Elaborate on every point. 
-    Analyze the "Why" and "How".
-    Create a highly detailed image prompt for the article cover.
+    Write the article now. Be critical and objective.
     """
 
     for index, api_key in enumerate(GROQ_API_KEYS):
         try:
-            print(f"   🤖 AI Writing (Key #{index+1})... This may take 30s...")
+            print(f"   🤖 AI Analysis & Writing (Key #{index+1})...")
             
             client = Groq(api_key=api_key)
             completion = client.chat.completions.create(
                 model=MODEL_NAME,
                 messages=[
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": system_prompt.replace("{LINKS}", internal_links_map)},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.6, # Sedikit kreatif agar panjang
-                max_tokens=6000, # Allow output panjang
-                response_format={"type": "json_object"}
+                temperature=0.6,
+                max_tokens=7000, # Max token besar untuk artikel panjang
             )
             return completion.choices[0].message.content
 
@@ -141,86 +170,76 @@ def main():
     os.makedirs(IMAGE_DIR, exist_ok=True)
     os.makedirs(DATA_DIR, exist_ok=True)
 
-    print("📡 Fetching Google News RSS...")
+    print("📡 Fetching High-Quality Sources...")
     feed = feedparser.parse(TARGET_CONFIG['rss_url'])
     
-    if not feed.entries:
-        print("❌ No entries found in RSS.")
-        return
+    if not feed.entries: return
 
     success_count = 0
-    print(f"🎯 Target: Generate {TARGET_ARTICLE_COUNT} articles.")
+    print(f"🎯 Mission: Publish {TARGET_ARTICLE_COUNT} Deep-Dive Articles.")
 
-    # LOOPING ARTIKEL
     for entry in feed.entries:
-        # Jika sudah mencapai target 5 artikel, berhenti
-        if success_count >= TARGET_ARTICLE_COUNT:
-            print("✅ Target reached. Stopping.")
-            break
+        if success_count >= TARGET_ARTICLE_COUNT: break
 
         clean_title = entry.title.split(" - ")[0]
         slug = slugify(clean_title)
         filename = f"{slug}.md"
 
-        # Cek apakah artikel sudah ada agar tidak duplikat
         if os.path.exists(f"{CONTENT_DIR}/{filename}"):
-            print(f"⏭️  Skipping (Exists): {clean_title[:30]}...")
+            print(f"⏭️  Exists: {clean_title[:30]}...")
             continue
 
         print(f"\n🔥 Processing [{success_count + 1}/{TARGET_ARTICLE_COUNT}]: {clean_title}")
         
-        # 1. Generate Konten
+        # 1. Generate Content (Raw Text)
         context = get_internal_links_context()
-        json_res = get_groq_article_seo(clean_title, entry.summary, entry.link, context)
+        raw_response = get_groq_article_seo(clean_title, entry.summary, entry.link, context)
         
-        if not json_res:
-            print("   ❌ AI Failed to generate content.")
+        if not raw_response:
+            print("   ❌ AI Generation Failed.")
             continue
 
-        try:
-            data = json.loads(json_res)
-        except json.JSONDecodeError:
-            print("   ❌ JSON Parsing Error.")
+        # 2. Parse Split (JSON Header vs Markdown Body)
+        data = parse_ai_response(raw_response)
+        if not data:
+            print("   ❌ Parsing Failed (Structure invalid).")
             continue
 
-        # 2. Generate Gambar
+        # 3. Image Engine (Retry Enabled)
         img_name = f"{slug}.jpg"
         has_img = download_and_optimize_image(data['image_prompt'], img_name)
         final_img = f"/images/{img_name}" if has_img else "/images/default-news.jpg"
         
-        # 3. Save Markdown
+        # 4. Save Markdown
         date = datetime.now().strftime("%Y-%m-%dT%H:%M:%S-05:00")
         
         md = f"""---
-title: "{data['title']}"
+title: "{data['title'].replace('"', "'")}"
 date: {date}
 author: "{AUTHOR_NAME}"
 categories: ["{data['category']}"]
 tags: ["{data['main_keyword']}"]
 featured_image: "{final_img}"
-description: "{data['description']}"
+description: "{data['description'].replace('"', "'")}"
 draft: false
 ---
 
 {data['content']}
 
 ---
-*Source: [Original Story]({entry.link})*
+*Sources: Analysis based on reports from AP, Reuters, and [Original Story]({entry.link}).*
 """
         with open(f"{CONTENT_DIR}/{filename}", "w", encoding="utf-8") as f: f.write(md)
         
-        # 4. Save Memory
-        if 'main_keyword' in data: 
-            save_link_to_memory(data['main_keyword'], slug)
+        if 'main_keyword' in data: save_link_to_memory(data['main_keyword'], slug)
         
-        print(f"   ✅ Saved: {filename}")
+        print(f"   ✅ Published: {filename}")
         success_count += 1
-
-        # 5. Rate Limit Safety (PENTING)
-        # Istirahat 15 detik sebelum artikel berikutnya agar tidak kena limit Groq/Pollinations
+        
+        # Jeda aman
         if success_count < TARGET_ARTICLE_COUNT:
-            print("   zzz... Sleeping 15s (Rate Limit Safety)...")
-            time.sleep(15)
+            print("   zzz... Analyzing next topic (10s)...")
+            time.sleep(10)
 
 if __name__ == "__main__":
     main()
