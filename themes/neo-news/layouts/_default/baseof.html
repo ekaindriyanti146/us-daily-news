@@ -11,9 +11,12 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Merriweather:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
 
     <!-- CSS -->
-    {{ $style := resources.Get "css/main.css" | resources.PostCSS }}
-    <link rel="stylesheet" href="{{ $style.Permalink }}">
-    
+     <!-- Tailwind CSS Processing (UPDATED) -->
+    {{ $options := dict "inlineImports" true }}
+    {{ $style := resources.Get "css/main.css" }}
+    {{ $style = $style | resources.PostCSS $options | minify | fingerprint }}
+    <link rel="stylesheet" href="{{ $style.Permalink }}" integrity="{{ $style.Data.Integrity }}">
+ 
     <!-- Alpine JS -->
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <!-- Fuse JS -->
