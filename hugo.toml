@@ -1,4 +1,4 @@
-baseURL = "/"
+baseURL = "https://us-daily-drab.vercel.app/"
 languageCode = "en-us"
 title = "US Daily Context"
 # theme = "neo-news"
