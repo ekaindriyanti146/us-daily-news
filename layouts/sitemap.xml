@@ -5,10 +5,7 @@
   
   {{ if gt .Date.Unix (now.AddDate 0 0 -2).Unix }}
   <url>
-    <!-- CARA BENAR: Menggunakan .Permalink (Otomatis & Dinamis) -->
-    <!-- Hugo akan mengisi ini berdasarkan Environment Variable -->
     <loc>{{ .Permalink }}</loc>
-    
     <news:news>
       <news:publication>
         <news:name>{{ .Site.Title }}</news:name>
