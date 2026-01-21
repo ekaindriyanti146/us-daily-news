@@ -1,19 +1,18 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
-  content: [
-    "./layouts/**/*.html",
-    "./content/**/*.md",
-    "./themes/neo-news/layouts/**/*.html"
-  ],
+  content: ["./layouts/**/*.html", "./content/**/*.md"],
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-        serif: ['Merriweather', 'Georgia', 'serif'],
+        sans: ['Roboto', 'sans-serif'],
+        display: ['Libre Franklin', 'sans-serif'],
       },
       colors: {
-        'news-blue': '#0056b3',
-        'news-dark': '#1a1a1a',
+        news: {
+            red: '#d0021b',
+            dark: '#101010',
+            gray: '#f2f2f2',
+        }
       }
     },
   },

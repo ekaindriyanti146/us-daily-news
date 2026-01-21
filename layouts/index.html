@@ -1,17 +1,21 @@
 {{ define "main" }}
 <div class="container mx-auto px-4 py-8">
 
-    <!-- 1. HERO SECTION (Layout CBS: Split Image & Text) -->
+    <!-- 1. HERO SECTION (Split Image & Text) -->
     {{ range first 1 (where .Site.RegularPages "Section" "articles") }}
     <section class="mb-12 border-b border-gray-200 pb-12">
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
             
-            <!-- Left: Image (Besar) -->
+            <!-- Left: Image (LCP PRIORITY) -->
             <div class="lg:col-span-8">
                 <a href="{{ .Permalink }}" class="block relative group overflow-hidden rounded-sm">
                     {{ if .Params.featured_image }}
+                    <!-- OPTIMIZATION: fetchpriority='high' memaksa browser download ini duluan -->
                     <img src="{{ .Params.featured_image }}" alt="{{ .Title }}" 
-                         class="w-full aspect-video object-cover transition duration-700 group-hover:scale-105">
+                         class="w-full aspect-video object-cover transition duration-700 group-hover:scale-105"
+                         loading="eager"
+                         fetchpriority="high"
+                         decoding="sync">
                     {{ end }}
                     <!-- Overlay Badge -->
                     <span class="absolute top-0 left-0 bg-news-red text-white text-[10px] font-bold px-3 py-1 uppercase tracking-widest">
@@ -20,7 +24,7 @@
                 </a>
             </div>
 
-            <!-- Right: Text (Judul Besar) -->
+            <!-- Right: Text -->
             <div class="lg:col-span-4 flex flex-col justify-center h-full">
                 <div class="mb-2">
                     <span class="text-news-red font-bold text-xs uppercase tracking-wider">
@@ -41,7 +45,7 @@
     </section>
     {{ end }}
 
-    <!-- 2. LATEST NEWS GRID (Card Putih Bersih) -->
+    <!-- 2. LATEST NEWS GRID -->
     <div class="flex items-center justify-between mb-6">
         <h2 class="font-display font-bold text-xl uppercase tracking-tight text-news-dark border-l-4 border-news-red pl-3">
             Latest Headlines
@@ -53,8 +57,11 @@
         <article class="group flex flex-col h-full">
             <a href="{{ .Permalink }}" class="block overflow-hidden rounded-sm mb-3">
                 {{ if .Params.featured_image }}
+                <!-- Gambar di bawah diload secara LAZY agar tidak memberatkan loading awal -->
                 <img src="{{ .Params.featured_image }}" alt="{{ .Title }}" 
-                     class="w-full h-40 object-cover transition duration-500 group-hover:scale-105 group-hover:opacity-90">
+                     class="w-full h-40 object-cover transition duration-500 group-hover:scale-105 group-hover:opacity-90"
+                     loading="lazy"
+                     decoding="async">
                 {{ end }}
             </a>
             <div class="flex flex-col flex-grow">
