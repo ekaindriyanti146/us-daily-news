@@ -120,9 +120,9 @@ def get_groq_article_seo(title, summary, link, internal_links_map, target_catego
     - image_prompt: Photorealistic, cinematic, news style, 16:9 aspect ratio.
 
     ARTICLE STRUCTURE:
-    1. **Key Takeaways** (Bulleted list)
-    2. **Introduction** (5W1H)
-    3. **Background & Context** (Deep dive)
+    1. **Key Takeaways** (Unique H2, Bulleted list)
+    2. **Introduction** (Unique H2, 5W1H)
+    3. **Background & Context** (Unique H2 Deep dive)
     4. **Analysis** (Why it matters for US citizens)
     5. **Quotes & Reactions** (Simulated expert quotes)
     6. **Outlook** (What's next)
