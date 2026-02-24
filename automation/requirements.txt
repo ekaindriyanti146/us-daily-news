@@ -4,3 +4,6 @@ python-slugify
 python-dotenv
 Pillow
 groq
+pytrends
+pandas
+lxml
