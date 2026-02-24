@@ -1,138 +1,194 @@
 import os
 import json
+import requests
 import time
 import re
 import random
-import requests
+import warnings 
+import string
+import pandas as pd
 from datetime import datetime
 from slugify import slugify
 from io import BytesIO
 from PIL import Image
-from groq import Groq, APIError, RateLimitError, BadRequestError
-
-# --- LIBRARY KHUSUS UNTUK FIX ERROR RETRY ---
+from groq import Groq, APIError, RateLimitError
 from pytrends.request import TrendReq
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
-# --- CONFIGURATION (GITHUB ACTIONS) ---
-GROQ_KEYS_RAW = os.environ.get("GROQ_API_KEY", "")
+# --- SUPPRESS WARNINGS ---
+warnings.filterwarnings("ignore", category=FutureWarning)
+
+# ==========================================
+# ⚙️ CONFIGURATION: US NEWS / GENERAL TRENDS
+# ==========================================
+
+# 🔑 API KEYS (GitHub Actions)
+GROQ_KEYS_RAW = os.environ.get("GROQ_API_KEY", "") 
 GROQ_API_KEYS = [k.strip() for k in GROQ_KEYS_RAW.split(",") if k.strip()]
 
 if not GROQ_API_KEYS:
-    print("❌ FATAL ERROR: Secret 'GROQ_API_KEY' Missing!")
+    print("❌ FATAL ERROR: Groq API Key is missing!")
     exit(1)
 
-# NICHE: US NEWS / GENERAL TRENDS (TIDAK BERUBAH)
-CATEGORY_MAPPING = {
-    "Technology": "t",
-    "Business": "b",
-    "Entertainment": "e",
-    "Sports": "s",
-    "Health": "m",
-    "Top Stories": "h"
-}
+# 🔥 PERSONA PENULIS (News Desk)
+AUTHOR_PROFILES = [
+    "US News Desk", 
+    "Tech Correspondent",
+    "Market Analyst", 
+    "Political Observer",
+    "Entertainment Weekly"
+]
 
-CONTENT_DIR = "content/articles"
+# 📂 KATEGORI (News Niche)
+VALID_CATEGORIES = [
+    "US Politics", "Business", "Technology", 
+    "Entertainment", "Sports", "Health",
+    "Science", "World News"
+]
+
+# 📈 SEED KEYWORDS (Pancingan untuk US News Trends)
+# Kita gunakan topik umum agar Pytrends mencarikan topik spesifik yang sedang "Naik Daun" (Rising)
+SEED_KEYWORDS = [
+    "Breaking News US", "Stock Market today", "US Politics", 
+    "Viral Celebrity", "NBA News", "NFL News",
+    "New Technology 2024", "Artificial Intelligence", "Health study",
+    "Movie releases", "Crypto news", "White House"
+]
+
+CONTENT_DIR = "content/articles" 
 IMAGE_DIR = "static/images"
 DATA_DIR = "automation/data"
 MEMORY_FILE = f"{DATA_DIR}/link_memory.json"
-AUTHOR_NAME = "Trend Desk"
 
-TARGET_PER_CATEGORY = 1 
+# Target Artikel per Run
+TARGET_ARTICLES = 2
 
 # ==========================================
-# 🛠️ HELPER FUNCTIONS
+# 🧠 HELPER FUNCTIONS
 # ==========================================
-
 def load_link_memory():
     if not os.path.exists(MEMORY_FILE): return {}
     try:
         with open(MEMORY_FILE, 'r') as f: return json.load(f)
     except: return {}
 
-def save_link_to_memory(keyword, slug):
+def save_link_to_memory(title, slug):
     os.makedirs(DATA_DIR, exist_ok=True)
     memory = load_link_memory()
-    clean_key = keyword.lower().strip()
-    memory[clean_key] = f"/articles/{slug}"
+    memory[title] = f"/articles/{slug}/" 
+    if len(memory) > 500: memory = dict(list(memory.items())[-500:])
     with open(MEMORY_FILE, 'w') as f: json.dump(memory, f, indent=2)
 
-def get_internal_links_context():
+def fetch_trending_topics(keywords, max_results=3):
+    """
+    ADAPTED LOGIC: Mengambil 'Rising Queries' (Topik Naik Daun) 
+    Metode ini lebih stabil daripada RealtimeTrends.
+    """
+    print(f"      ... Connecting to Google Trends...")
+    topics = []
+    
+    # Backoff random
+    time.sleep(random.uniform(2, 5))
+    
+    try:
+        # --- FIX: Hapus parameter 'session', gunakan timeout saja ---
+        pytrends = TrendReq(hl='en-US', tz=360, timeout=(10,25))
+        
+        # Ambil 1 Keyword Acak dari Seed
+        current_kw = random.choice(keywords)
+        print(f"      🔍 Analyzing Trends for Seed: '{current_kw}'")
+        
+        # Build Payload (Data 7 hari terakhir agar fresh)
+        pytrends.build_payload([current_kw], cat=0, timeframe='now 7-d', geo='US', gprop='')
+        
+        # Ambil Related Queries
+        related = pytrends.related_queries()
+        
+        if current_kw in related and related[current_kw]['rising'] is not None:
+            df_rising = related[current_kw]['rising']
+            
+            # Ambil top queries yang relevan
+            for index, row in df_rising.iterrows():
+                query = row['query']
+                # Filter query: minimal 2 kata
+                if len(query.split()) >= 2: 
+                    topics.append(query.title())
+                    if len(topics) >= max_results:
+                        break
+            
+            if len(topics) > 0:
+                print(f"      ✅ Found {len(topics)} rising topics: {topics}")
+                return topics
+            
+        print("      ⚠️ No significant 'Rising' data, using seed keyword.")
+        return [current_kw]
+            
+    except Exception as e:
+        print(f"      ⚠️ GTrends Error: {e}")
+        # Fallback ke keyword itu sendiri jika API gagal
+        return [current_kw]
+
+def clean_ai_content(text):
+    if not text: return ""
+    text = re.sub(r'^```[a-zA-Z]*\n', '', text)
+    text = re.sub(r'\n```$', '', text)
+    text = text.replace("```", "")
+    
+    # Hapus Header Basa-basi
+    patterns_to_remove = [
+        r'^#+\s*Introduction.*?$', r'^#+\s*Conclusion.*?$', 
+        r'^#+\s*Summary.*?$', r'^#+\s*The Verdict.*?$'
+    ]
+    for pattern in patterns_to_remove:
+        text = re.sub(pattern, '', text, flags=re.MULTILINE | re.IGNORECASE)
+
+    # Normalisasi Header
+    text = text.replace("<h1>", "# ").replace("</h1>", "\n")
+    text = text.replace("<h2>", "## ").replace("</h2>", "\n")
+    text = text.replace("<h3>", "### ").replace("</h3>", "\n")
+    
+    return text.strip()
+
+# ==========================================
+# 📑 LINKS & FORMATTING
+# ==========================================
+def inject_links_into_body(content_body, current_title):
     memory = load_link_memory()
     items = list(memory.items())
-    if len(items) > 20: items = random.sample(items, 20)
-    return json.dumps(dict(items))
+    if not items: return content_body
+    
+    matches = random.sample(items, min(3, len(items)))
+    
+    link_box = "\n\n> **📰 Read Also:**\n"
+    for title, url in matches:
+        link_box += f"> - [{title}]({url})\n"
+    link_box += "\n"
+
+    paragraphs = content_body.split('\n\n')
+    if len(paragraphs) > 3:
+        paragraphs.insert(2, link_box)
+        return "\n\n".join(paragraphs)
+    return content_body + link_box
 
 # ==========================================
-# 📈 PYTRENDS DATA FETCHER (FIXED METHOD_WHITELIST ERROR)
-# ==========================================
-def fetch_pytrends_data(category_code, region='US'):
-    print(f"      📡 Connecting to Google Trends (Cat: {category_code})...")
-    try:
-        # --- FIX: MANUAL SESSION SETUP ---
-        # Kita membuat session sendiri agar tidak mengandalkan default pytrends yang error
-        session = requests.Session()
-        
-        # Konfigurasi Retry manual dengan parameter yang benar ('allowed_methods')
-        retry = Retry(
-            total=3, 
-            read=3, 
-            connect=3, 
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
-            # INI KUNCI PERBAIKANNYA: Gunakan allowed_methods, bukan method_whitelist
-            allowed_methods=["HEAD", "GET", "OPTIONS"] 
-        )
-        
-        adapter = HTTPAdapter(max_retries=retry)
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
-
-        # Masukkan session custom ke TrendReq
-        pytrends = TrendReq(hl='en-US', tz=360, session=session)
-        
-        # Ambil Realtime Trends
-        df = pytrends.realtime_trending_searches(pn=region, cat=category_code)
-        
-        if df is None or df.empty:
-            print("      ⚠️ Empty Data from Google Trends.")
-            return []
-            
-        trends_list = []
-        # Ambil 3 teratas saja
-        for index, row in df.head(3).iterrows():
-            title = row['title']
-            context = ""
-            if 'entity_names' in row and isinstance(row['entity_names'], list):
-                context = ", ".join(row['entity_names'])
-            
-            trends_list.append({
-                "keyword": title,
-                "context": context
-            })
-            
-        return trends_list
-
-    except Exception as e:
-        # Jika error, print tapi jangan matikan script, lanjut kategori lain
-        print(f"      ❌ Pytrends Error: {e}")
-        return []
-
-# ==========================================
-# 🎨 IMAGE ENGINE (MULTI SOURCE - NO POLLINATIONS)
+# 🎨 IMAGE GENERATOR (MULTI-SOURCE / NO POLLINATIONS)
 # ==========================================
 def download_and_optimize_image(prompt, filename):
     output_path = f"{IMAGE_DIR}/{filename}"
+    
+    # Bersihkan prompt untuk tag pencarian Flickr
     clean_tags = prompt.replace(" ", ",").replace("photorealistic", "").replace("cinematic", "")
     clean_tags = re.sub(r'[^a-zA-Z,]', '', clean_tags)[:100]
     
-    # 1. Flickr
+    print(f"      🎨 Generating Image for: {clean_tags[:30]}...")
+    
+    # 1. Flickr (Real Photos - Prioritas Utama untuk Berita)
     flickr_url = f"https://loremflickr.com/1280/720/{clean_tags}/all"
-    # 2. Hercai
+    
+    # 2. Hercai (AI Fallback)
     safe_prompt = prompt.replace(" ", "%20")[:200]
     hercai_url = f"https://hercai.onrender.com/v3/text2image?prompt={safe_prompt}"
-    # 3. Picsum
+
+    # 3. Picsum (Placeholder)
     picsum_url = "https://picsum.photos/1280/720"
 
     sources = [("Flickr", flickr_url), ("Hercai AI", hercai_url), ("Picsum", picsum_url)]
@@ -156,144 +212,153 @@ def download_and_optimize_image(prompt, filename):
                 img = img.resize((1280, 720), Image.Resampling.LANCZOS)
                 img.convert("RGB").save(output_path, "JPEG", quality=85, optimize=True)
                 print(f"      ✅ Image Saved ({source_name})")
-                return True
+                return f"/images/{filename}"
         except Exception: continue
-    return False
-
-# ==========================================
-# 🤖 GROQ CONTENT ENGINE
-# ==========================================
-def parse_ai_response(text):
-    try:
-        parts = text.split("|||BODY_START|||")
-        if len(parts) < 2: return None
-        json_part = parts[0].strip()
-        body_part = parts[1].strip()
-        json_part = re.sub(r'^```json', '', json_part)
-        json_part = re.sub(r'```$', '', json_part)
-        data = json.loads(json_part)
-        data['content'] = body_part
-        return data
-    except Exception as e:
-        print(f"      ❌ JSON Parse Error: {e}")
-        return None
-
-def get_groq_article(keyword, context_entities, internal_links, category):
-    MODEL_NAME = "llama-3.3-70b-versatile"
     
+    return "/images/default-news.jpg"
+
+# ==========================================
+# 🧠 AI ENGINE (NEWS MODE)
+# ==========================================
+def get_groq_article_json(keyword, author_name):
+    # System Prompt Khusus NEWS
     system_prompt = f"""
-    You are a Senior Journalist.
-    CATEGORY: {category}
-    INPUT: Trending Keyword "{keyword}" (Context: {context_entities})
+    You are {author_name}, a Senior Journalist for a major US Outlet.
     
-    TASK: Write a 800-1000 word news article.
+    INPUT: Trending Keyword "{keyword}"
+    TASK: Write a Breaking News Article / Analysis (1000+ words).
+    
+    STYLE RULES:
+    1. Journalistic Tone (AP Style). Objective but engaging.
+    2. Structure: 
+       - Lead Paragraph (5W1H)
+       - The Details (Body)
+       - Background/Context
+       - Reaction/Quotes (Simulated)
+    3. NO "Introduction" or "Conclusion" headers. Use descriptive headers.
     
     OUTPUT JSON:
-    {{"title": "Headline using {keyword}", "description": "SEO desc", "category": "{category}", "main_keyword": "{keyword}", "image_prompt": "visual tags"}}
-    |||BODY_START|||
-    [Markdown Content]
-
-    STRUCTURE:
-    1. **Breaking News**: What is happening?
-    2. **Background**: Context.
-    3. **Impact**: Why it matters.
-    Use H2 (##). Internal links: {internal_links}.
+    {{
+        "title": "A Clickworthy News Headline for '{keyword}'",
+        "description": "SEO description (150 chars)",
+        "category": "One of: {', '.join(VALID_CATEGORIES)}",
+        "main_keyword": "{keyword}",
+        "tags": ["tag1", "tag2", "News", "US"],
+        "content_body": "Full markdown content..."
+    }}
     """
-    user_prompt = f"Write news about: {keyword}"
-
-    for index, api_key in enumerate(GROQ_API_KEYS):
+    
+    user_prompt = f"KEYWORD: {keyword}\n\nWrite the full story."
+    
+    for api_key in GROQ_API_KEYS:
+        client = Groq(api_key=api_key)
         try:
-            client = Groq(api_key=api_key)
+            print(f"      🤖 AI Writing about '{keyword}'...")
             completion = client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-                temperature=0.7, max_tokens=5000,
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.6,
+                max_tokens=6000,
+                response_format={"type": "json_object"}
             )
             return completion.choices[0].message.content
+        except RateLimitError:
+            time.sleep(2)
         except Exception as e:
-            print(f"      ⚠️ Groq Error (Key #{index}): {e}")
-            continue
+            print(f"      ⚠️ Error: {e}")
     return None
 
 # ==========================================
-# 🚀 MAIN
+# 🏁 MAIN WORKFLOW
 # ==========================================
 def main():
     os.makedirs(CONTENT_DIR, exist_ok=True)
     os.makedirs(IMAGE_DIR, exist_ok=True)
     os.makedirs(DATA_DIR, exist_ok=True)
 
-    print("🔥 ENGINE STARTED: GITHUB ACTIONS MODE (FIXED PYTRENDS)")
+    print("🔥 US NEWS ENGINE STARTED (ADAPTED MODE)")
 
-    total_generated = 0
-
-    for category_name, cat_code in CATEGORY_MAPPING.items():
-        print(f"\n📡 Fetching Pytrends: {category_name}...")
+    # 1. Fetch Trending Topics
+    # Menggunakan Seed Keywords untuk mencari 'Rising Queries'
+    trending_topics = fetch_trending_topics(SEED_KEYWORDS, max_results=TARGET_ARTICLES)
+    
+    processed_count = 0
+    
+    for topic in trending_topics:
+        if processed_count >= TARGET_ARTICLES: break
         
-        # 1. Fetch Data (Fixed Session)
-        trends = fetch_pytrends_data(cat_code)
+        clean_topic = topic.strip()
+        temp_slug = slugify(clean_topic, max_length=60)
         
-        if not trends:
-            print(f"   ⚠️ No trends data. Sleeping...")
-            time.sleep(5)
+        # Cek Duplikasi
+        exists = False
+        for f_name in os.listdir(CONTENT_DIR):
+            if temp_slug in f_name:
+                exists = True
+                break
+        
+        if exists:
+            print(f"   ⏩ Skipped (Exist): {clean_topic}")
+            continue
+            
+        print(f"\n   ⚡ Processing Trend: {clean_topic}")
+        
+        author = random.choice(AUTHOR_PROFILES)
+        raw_json = get_groq_article_json(clean_topic, author)
+        
+        if not raw_json: continue
+        try:
+            data = json.loads(raw_json)
+        except:
+            print("      ❌ JSON Error")
             continue
 
-        cat_success_count = 0
-        for trend in trends:
-            if cat_success_count >= TARGET_PER_CATEGORY: break
+        # Finalize
+        final_slug = slugify(data['title'], max_length=60)
+        filename = f"{final_slug}.md"
+        img_filename = f"{final_slug}.jpg"
+        
+        # Fallback Category
+        cat = data.get('category', "General News")
+        if cat not in VALID_CATEGORIES: cat = random.choice(VALID_CATEGORIES)
 
-            keyword = trend['keyword']
-            context = trend['context']
-            clean_slug = slugify(keyword)
-            filename = f"{clean_slug}.md"
-
-            if os.path.exists(f"{CONTENT_DIR}/{filename}"): continue
-
-            print(f"   🔥 Processing: {keyword}...")
-            
-            # 2. Content
-            internal_links = get_internal_links_context()
-            raw_response = get_groq_article(keyword, context, internal_links, category_name)
-            if not raw_response: continue
-            data = parse_ai_response(raw_response)
-            if not data: continue
-
-            # 3. Image
-            img_name = f"{clean_slug}.jpg"
-            has_img = download_and_optimize_image(data.get('image_prompt', keyword), img_name)
-            final_img = f"/images/{img_name}" if has_img else "/images/default-news.jpg"
-            
-            # 4. Save
-            date_str = datetime.now().strftime("%Y-%m-%dT%H:%M:%S-05:00")
-            md_content = f"""---
+        # Generate Assets
+        img_path = download_and_optimize_image(data['main_keyword'], img_filename)
+        clean_body = clean_ai_content(data['content_body'])
+        final_body = inject_links_into_body(clean_body, data['title'])
+        
+        # Create File
+        md = f"""---
 title: "{data['title'].replace('"', "'")}"
-date: {date_str}
-author: "{AUTHOR_NAME}"
-categories: ["{data['category']}"]
-tags: ["{data['main_keyword']}", "Trending"]
-featured_image: "{final_img}"
+date: {datetime.now().strftime("%Y-%m-%dT%H:%M:%S+00:00")}
+author: "{author}"
+categories: ["{cat}"]
+tags: {json.dumps(data.get('tags', []))}
+featured_image: "{img_path}"
 description: "{data['description'].replace('"', "'")}"
+slug: "{final_slug}"
 draft: false
 ---
 
-{data['content']}
+{final_body}
 
 ---
-*Sources: Analysis based on Realtime Trends data.*
+*Sources: Analysis based on current trending topics.*
 """
-            with open(f"{CONTENT_DIR}/{filename}", "w", encoding="utf-8") as f: f.write(md_content)
+        with open(f"{CONTENT_DIR}/{filename}", "w", encoding="utf-8") as f:
+            f.write(md)
             
-            if 'main_keyword' in data: save_link_to_memory(data['main_keyword'], clean_slug)
-            
-            print(f"   ✅ Published: {filename}")
-            cat_success_count += 1
-            total_generated += 1
-            
-            # DELAY PENTING
-            print("   💤 Cooling down 20s...")
-            time.sleep(20)
-
-    print(f"\n🎉 DONE! Total articles: {total_generated}")
+        save_link_to_memory(data['title'], final_slug)
+        
+        print(f"      ✅ Published: {final_slug}")
+        processed_count += 1
+        
+        # Jeda antar artikel untuk keamanan
+        print("      💤 Cooldown 30s...")
+        time.sleep(30)
 
 if __name__ == "__main__":
     main()
