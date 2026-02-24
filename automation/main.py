@@ -19,25 +19,26 @@ if not GROQ_API_KEYS:
     print("❌ FATAL ERROR: API Key Groq Kosong!")
     exit(1)
 
-# DAFTAR KATEGORI & RSS URL GOOGLE NEWS (US REGION)
+# DAFTAR KATEGORI & RSS URL GOOGLE TRENDS (US REGION)
+# Kode Kategori GTRENDS: b=Business, e=Entertainment, m=Health, s=Sports, t=Sci/Tech, h=Top
+BASE_GTRENDS = "https://trends.google.com/trends/trendingsearches/daily/rss?geo=US"
+
 CATEGORY_URLS = {
-    "US Politics": "https://news.google.com/rss/headlines/section/topic/POLITICS?hl=en-US&gl=US&ceid=US:en",
-    "Business": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en",
-    "Technology": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-US&gl=US&ceid=US:en",
-    "World": "https://news.google.com/rss/headlines/section/topic/WORLD?hl=en-US&gl=US&ceid=US:en",
-    "Science": "https://news.google.com/rss/headlines/section/topic/SCIENCE?hl=en-US&gl=US&ceid=US:en",
-    "Health": "https://news.google.com/rss/headlines/section/topic/HEALTH?hl=en-US&gl=US&ceid=US:en",
-    "Entertainment": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=en-US&gl=US&ceid=US:en",
-    "Sports": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-US&gl=US&ceid=US:en"
+    "General Trends": f"{BASE_GTRENDS}", # Campuran (untuk Politik/World biasanya masuk sini)
+    "Business": f"{BASE_GTRENDS}&cat=b",
+    "Technology": f"{BASE_GTRENDS}&cat=t",
+    "Health": f"{BASE_GTRENDS}&cat=m",
+    "Entertainment": f"{BASE_GTRENDS}&cat=e",
+    "Sports": f"{BASE_GTRENDS}&cat=s"
 }
 
 CONTENT_DIR = "content/articles"
 IMAGE_DIR = "static/images"
 DATA_DIR = "automation/data"
 MEMORY_FILE = f"{DATA_DIR}/link_memory.json"
-AUTHOR_NAME = "US News Desk"
+AUTHOR_NAME = "Trend Analyst"
 
-# Target per kategori (Minimal 1)
+# Target per kategori
 TARGET_PER_CATEGORY = 1 
 
 # --- MEMORY SYSTEM ---
@@ -61,27 +62,66 @@ def get_internal_links_context():
         items = random.sample(items, 30)
     return json.dumps(dict(items))
 
-# --- IMAGE ENGINE (ROBUST) ---
+# --- IMAGE ENGINE (ROBUST - NO POLLINATIONS) ---
 def download_and_optimize_image(prompt, filename):
+    """
+    Menggunakan LoremFlickr (Real Photos) sebagai prioritas,
+    fallback ke Hercai (AI) jika gagal.
+    """
+    output_path = f"{IMAGE_DIR}/{filename}"
+    
+    # Bersihkan prompt untuk tag URL
+    clean_tags = prompt.replace(" ", ",").replace("photorealistic", "").replace("cinematic", "")
+    clean_tags = re.sub(r'[^a-zA-Z,]', '', clean_tags)[:100] # Ambil huruf & koma saja
+    
+    # 1. SUMBER FLICKR (Via LoremFlickr - Real Photos)
+    # Format: https://loremflickr.com/width/height/tags
+    flickr_url = f"https://loremflickr.com/1280/720/{clean_tags}/all"
+    
+    # 2. SUMBER AI ALTERNATIF (Hercai - Text to Image)
     safe_prompt = prompt.replace(" ", "%20")[:200]
-    # Menggunakan model Flux Realism
-    image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1280&height=720&nologo=true&model=flux-realism"
-    
-    for attempt in range(3):
+    hercai_url = f"https://hercai.onrender.com/v3/text2image?prompt={safe_prompt}"
+
+    # 3. SUMBER PLACEHOLDER (Picsum)
+    picsum_url = "https://picsum.photos/1280/720"
+
+    # List urutan percobaan
+    sources = [
+        ("Flickr (Real)", flickr_url),
+        ("Hercai (AI)", hercai_url),
+        ("Picsum (Backup)", picsum_url)
+    ]
+
+    for source_name, url in sources:
         try:
-            print(f"      🎨 Generating Image (Attempt {attempt+1})...")
-            response = requests.get(image_url, timeout=60)
-            if response.status_code == 200:
-                img = Image.open(BytesIO(response.content))
+            print(f"      🎨 Trying Image Source: {source_name}...")
+            
+            # Khusus Hercai butuh parsing JSON
+            if "Hercai" in source_name:
+                resp = requests.get(url, timeout=40)
+                if resp.status_code == 200:
+                    json_data = resp.json()
+                    if "url" in json_data:
+                        image_url = json_data["url"]
+                        img_resp = requests.get(image_url, timeout=30)
+                    else: continue
+                else: continue
+            else:
+                # Flickr/Picsum langsung return image binary
+                img_resp = requests.get(url, timeout=30, allow_redirects=True)
+
+            if img_resp.status_code == 200:
+                img = Image.open(BytesIO(img_resp.content))
                 img = img.resize((1280, 720), Image.Resampling.LANCZOS)
-                output_path = f"{IMAGE_DIR}/{filename}"
-                img.convert("RGB").save(output_path, "JPEG", quality=80, optimize=True)
+                img.convert("RGB").save(output_path, "JPEG", quality=85, optimize=True)
+                print(f"      ✅ Image Saved using {source_name}")
                 return True
+                
         except Exception as e:
-            print(f"      ⚠️ Image fail: {e}")
-            time.sleep(5)
+            print(f"      ⚠️ {source_name} Failed: {e}")
+            time.sleep(2)
     
-    print("      ❌ Image failed after 3 attempts.")
+    print("      ❌ All Image Sources Failed.")
     return False
 
 # --- AI ENGINE ---
@@ -91,8 +131,9 @@ def parse_ai_response(text):
         if len(parts) < 2: return None
         json_part = parts[0].strip()
         body_part = parts[1].strip()
-        json_part = re.sub(r'```json\s*', '', json_part)
-        json_part = re.sub(r'```', '', json_part)
+        # Bersihkan markdown json jika ada
+        json_part = re.sub(r'^```json', '', json_part)
+        json_part = re.sub(r'```$', '', json_part)
         data = json.loads(json_part)
         data['content'] = body_part
         return data
@@ -103,43 +144,39 @@ def parse_ai_response(text):
 def get_groq_article_seo(title, summary, link, internal_links_map, target_category):
     MODEL_NAME = "llama-3.3-70b-versatile"
     
+    # Karena GTrends memberikan keyword, bukan judul lengkap, prompt harus disesuaikan
     system_prompt = f"""
-    You are a Senior Journalist for 'US Daily'.
+    You are a Senior Trend Analyst for a major US News Outlet.
     TARGET CATEGORY: {target_category}
     
-    TASK: Write a highly authoritative news article (1000+ words).
+    INPUT DATA: You will receive a **Trending Keyword** and related news snippets/traffic info.
+    
+    TASK: Write a comprehensive news article (1000+ words) explaining WHY this keyword is trending.
     
     OUTPUT FORMAT (STRICT):
-    {{"title": "...", "description": "...", "category": "{target_category}", "main_keyword": "...", "image_prompt": "..."}}
+    {{"title": "Click-worthy Headline based on the Trend", "description": "SEO description (150 chars)", "category": "{target_category}", "main_keyword": "The Trending Keyword", "image_prompt": "Visual description for Flickr search (simple tags)"}}
     |||BODY_START|||
     [Markdown Article Content]
 
-    METADATA RULES:
-    - category: MUST BE EXACTLY '{target_category}'
-    - description: SEO optimized, under 160 chars.
-    - image_prompt: Photorealistic, cinematic, news style, 16:9 aspect ratio.
-
     ARTICLE STRUCTURE:
-    1. **Key Takeaways** (Unique H2, Bulleted list)
-    2. **Introduction** (Unique H2, 5W1H)
-    3. **Background & Context** (Unique H2 Deep dive)
-    4. **Analysis** (Why it matters for US citizens)
-    5. **Quotes & Reactions** (Simulated expert quotes)
-    6. **Outlook** (What's next)
+    1. **Trending Update** (Why is everyone searching this right now?)
+    2. **The Full Story** (5W1H - What happened?)
+    3. **Background** (Context/History)
+    4. **Social Sentiment** (What people are saying)
+    5. **Impact Analysis** (Why it matters)
     
     STYLE:
     - Use H2 (##) and H3 (###).
-    - Bold important entities.
-    - Use internal links: {internal_links_map} -> Syntax: [Keyword](/articles/slug).
-    - Objective, professional, CBS/NYT style.
+    - **Crucial**: Incorporate the keyword naturally.
+    - Use internal links: {internal_links_map}.
     """
 
     user_prompt = f"""
-    News: {title}
-    Context: {summary}
-    Link: {link}
+    TRENDING KEYWORD: {title}
+    CONTEXT/SNIPPETS: {summary}
+    GOOGLE SEARCH LINK: {link}
     
-    Write the article now.
+    Analyze this trend and write the article.
     """
 
     for index, api_key in enumerate(GROQ_API_KEYS):
@@ -152,8 +189,8 @@ def get_groq_article_seo(title, summary, link, internal_links_map, target_catego
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.6,
-                max_tokens=6500,
+                temperature=0.7,
+                max_tokens=6000,
             )
             return completion.choices[0].message.content
 
@@ -176,35 +213,38 @@ def main():
 
     # LOOPING SETIAP KATEGORI
     for category_name, rss_url in CATEGORY_URLS.items():
-        print(f"\n📡 Fetching Category: {category_name}...")
+        print(f"\n📡 Fetching GTrends: {category_name}...")
+        
+        # Parse RSS
         feed = feedparser.parse(rss_url)
         
         if not feed.entries:
-            print(f"   ⚠️ No entries for {category_name}. Skipping.")
+            print(f"   ⚠️ No trends found for {category_name}. Skipping.")
             continue
 
         cat_success_count = 0
         
-        # LOOPING BERITA DI DALAM KATEGORI TERSEBUT
         for entry in feed.entries:
-            # Jika sudah dapat 1 artikel untuk kategori ini, pindah ke kategori berikutnya
             if cat_success_count >= TARGET_PER_CATEGORY:
                 break
 
-            clean_title = entry.title.split(" - ")[0]
-            slug = slugify(clean_title)
-            filename = f"{slug}.md"
+            # Di Google Trends RSS, entry.title adalah KEYWORD (misal: "Taylor Swift")
+            trending_keyword = entry.title
+            
+            # entry.summary biasanya berisi snippet berita terkait atau data traffic
+            trend_context = entry.summary if 'summary' in entry else "High Search Volume"
+            
+            clean_slug = slugify(trending_keyword)
+            filename = f"{clean_slug}.md"
 
             if os.path.exists(f"{CONTENT_DIR}/{filename}"):
-                # print(f"   ⏭️  Skipping (Exists): {clean_title[:20]}...")
                 continue
 
-            print(f"   🔥 Processing: {clean_title[:50]}...")
+            print(f"   🔥 Trending: {trending_keyword}...")
             
             # 1. Generate AI
             context = get_internal_links_context()
-            # Kita kirim nama kategori spesifik ke AI agar akurat
-            raw_response = get_groq_article_seo(clean_title, entry.summary, entry.link, context, category_name)
+            raw_response = get_groq_article_seo(trending_keyword, trend_context, entry.link, context, category_name)
             
             if not raw_response:
                 print("      ❌ AI Failed.")
@@ -215,10 +255,13 @@ def main():
                 print("      ❌ Parse Failed.")
                 continue
 
-            # 2. Image
-            img_name = f"{slug}.jpg"
-            has_img = download_and_optimize_image(data['image_prompt'], img_name)
-            final_img = f"/images/{img_name}" if has_img else "/images/default-news.jpg"
+            # 2. Image (Multi-Source Fallback)
+            img_name = f"{clean_slug}.jpg"
+            # Gunakan keyword dari AI atau keyword asli untuk pencarian gambar
+            image_search_term = data.get('image_prompt', trending_keyword)
+            has_img = download_and_optimize_image(image_search_term, img_name)
+            
+            final_img = f"/images/{img_name}" if has_img else "/images/default-trend.jpg"
             
             # 3. Save Markdown
             date = datetime.now().strftime("%Y-%m-%dT%H:%M:%S-05:00")
@@ -228,7 +271,7 @@ title: "{data['title'].replace('"', "'")}"
 date: {date}
 author: "{AUTHOR_NAME}"
 categories: ["{data['category']}"]
-tags: ["{data['main_keyword']}"]
+tags: ["{data['main_keyword']}", "Trending"]
 featured_image: "{final_img}"
 description: "{data['description'].replace('"', "'")}"
 draft: false
@@ -237,20 +280,19 @@ draft: false
 {data['content']}
 
 ---
-*Sources: Analysis based on reports from AP, Reuters, and [Original Story]({entry.link}).*
+*Sources: Analysis based on Google Trends Data and Search Volume.*
 """
             with open(f"{CONTENT_DIR}/{filename}", "w", encoding="utf-8") as f: f.write(md)
             
             if 'main_keyword' in data: 
-                save_link_to_memory(data['main_keyword'], slug)
+                save_link_to_memory(data['main_keyword'], clean_slug)
             
             print(f"   ✅ Published: {filename}")
             cat_success_count += 1
             total_generated += 1
             
-            # Jeda 15 detik agar API Groq & Pollinations aman
-            print("   zzz... Cooling down 15s...")
-            time.sleep(15)
+            print("   zzz... Cooling down 10s...")
+            time.sleep(10)
 
     print(f"\n🎉 DONE! Total articles generated: {total_generated}")
 
