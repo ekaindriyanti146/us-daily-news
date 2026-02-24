@@ -7,3 +7,4 @@ groq
 pytrends
 pandas
 lxml
+urllib3
