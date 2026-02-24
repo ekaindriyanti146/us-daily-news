@@ -1,47 +1,61 @@
 import os
 import json
-import requests
-import feedparser
 import time
 import re
 import random
 from datetime import datetime
+import requests
 from slugify import slugify
 from io import BytesIO
 from PIL import Image
 from groq import Groq, APIError, RateLimitError, BadRequestError
 
-# --- CONFIGURATION ---
+# Library Pytrends (Wajib ada di requirements.txt)
+from pytrends.request import TrendReq
+
+# Library Dotenv (Opsional di GitHub Actions, tapi tetap kita load agar tidak error jika ada di requirements)
+try:
+    from dotenv import load_dotenv
+    load_dotenv() # Aman dipanggil meski file .env tidak ada
+except ImportError:
+    pass
+
+# ==========================================
+# ⚙️ CONFIGURATION (GITHUB ACTIONS CONTEXT)
+# ==========================================
+
+# Mengambil Key langsung dari Environment Variable (GitHub Secrets)
 GROQ_KEYS_RAW = os.environ.get("GROQ_API_KEY", "")
 GROQ_API_KEYS = [k.strip() for k in GROQ_KEYS_RAW.split(",") if k.strip()]
 
 if not GROQ_API_KEYS:
-    print("❌ FATAL ERROR: API Key Groq Kosong!")
+    print("❌ FATAL ERROR: Secret 'GROQ_API_KEY' tidak ditemukan di Environment GitHub Actions!")
     exit(1)
 
-# DAFTAR KATEGORI & RSS URL GOOGLE TRENDS (US REGION)
-# Kode Kategori GTRENDS: b=Business, e=Entertainment, m=Health, s=Sports, t=Sci/Tech, h=Top
-BASE_GTRENDS = "https://trends.google.com/trends/trendingsearches/daily/rss?geo=US"
-
-CATEGORY_URLS = {
-    "General Trends": f"{BASE_GTRENDS}", # Campuran (untuk Politik/World biasanya masuk sini)
-    "Business": f"{BASE_GTRENDS}&cat=b",
-    "Technology": f"{BASE_GTRENDS}&cat=t",
-    "Health": f"{BASE_GTRENDS}&cat=m",
-    "Entertainment": f"{BASE_GTRENDS}&cat=e",
-    "Sports": f"{BASE_GTRENDS}&cat=s"
+# Mapping Kategori Pytrends (Realtime)
+# 'b': Business, 'e': Entertainment, 'm': Health, 's': Sports, 't': Sci/Tech, 'h': Top Stories
+CATEGORY_MAPPING = {
+    "Technology": "t",
+    "Business": "b",
+    "Entertainment": "e",
+    "Sports": "s",
+    "Health": "m",
+    "Top Stories": "h"
 }
 
 CONTENT_DIR = "content/articles"
 IMAGE_DIR = "static/images"
 DATA_DIR = "automation/data"
 MEMORY_FILE = f"{DATA_DIR}/link_memory.json"
-AUTHOR_NAME = "Trend Analyst"
+AUTHOR_NAME = "Trend Desk"
 
-# Target per kategori
+# Target artikel per kategori sekali jalan
 TARGET_PER_CATEGORY = 1 
 
-# --- MEMORY SYSTEM ---
+# ==========================================
+# 🛠️ HELPER FUNCTIONS
+# ==========================================
+
 def load_link_memory():
     if not os.path.exists(MEMORY_FILE): return {}
     try:
@@ -58,47 +72,81 @@ def save_link_to_memory(keyword, slug):
 def get_internal_links_context():
     memory = load_link_memory()
     items = list(memory.items())
-    if len(items) > 30:
-        items = random.sample(items, 30)
+    # Ambil sampel acak agar prompt tidak terlalu panjang
+    if len(items) > 20:
+        items = random.sample(items, 20)
     return json.dumps(dict(items))
 
-# --- IMAGE ENGINE (ROBUST - NO POLLINATIONS) ---
+# ==========================================
+# 📈 PYTRENDS DATA FETCHER
+# ==========================================
+def fetch_pytrends_data(category_code, region='US'):
+    print(f"      📡 Connecting to Google Trends (Cat: {category_code})...")
+    try:
+        # Inisialisasi Pytrends
+        # hl='en-US' penting agar keyword keluar dalam bahasa Inggris
+        pytrends = TrendReq(hl='en-US', tz=360, timeout=(10,25), retries=3, backoff_factor=0.5)
+        
+        # Ambil Realtime Trends
+        df = pytrends.realtime_trending_searches(pn=region, cat=category_code)
+        
+        if df is None or df.empty:
+            print("      ⚠️ Empty Data from Google Trends.")
+            return []
+            
+        trends_list = []
+        # Ambil 5 teratas saja untuk diproses
+        for index, row in df.head(5).iterrows():
+            title = row['title'] # Keyword Utama
+            
+            # Ambil konteks entities jika ada
+            context = ""
+            if 'entity_names' in row and isinstance(row['entity_names'], list):
+                context = ", ".join(row['entity_names'])
+            
+            trends_list.append({
+                "keyword": title,
+                "context": context
+            })
+            
+        return trends_list
+
+    except Exception as e:
+        print(f"      ❌ Pytrends Error (Mungkin Blocked IP GitHub): {e}")
+        return []
+
+# ==========================================
+# 🎨 IMAGE ENGINE (NO POLLINATIONS - ROBUST)
+# ==========================================
 def download_and_optimize_image(prompt, filename):
-    """
-    Menggunakan LoremFlickr (Real Photos) sebagai prioritas,
-    fallback ke Hercai (AI) jika gagal.
-    """
     output_path = f"{IMAGE_DIR}/{filename}"
     
-    # Bersihkan prompt untuk tag URL
+    # Bersihkan prompt untuk tag pencarian Flickr
     clean_tags = prompt.replace(" ", ",").replace("photorealistic", "").replace("cinematic", "")
-    clean_tags = re.sub(r'[^a-zA-Z,]', '', clean_tags)[:100] # Ambil huruf & koma saja
+    clean_tags = re.sub(r'[^a-zA-Z,]', '', clean_tags)[:100]
     
-    # 1. SUMBER FLICKR (Via LoremFlickr - Real Photos)
-    # Format: https://loremflickr.com/width/height/tags
+    # Sumber 1: Flickr (Real Photos)
     flickr_url = f"https://loremflickr.com/1280/720/{clean_tags}/all"
     
-    # 2. SUMBER AI ALTERNATIF (Hercai - Text to Image)
+    # Sumber 2: Hercai (AI Fallback)
     safe_prompt = prompt.replace(" ", "%20")[:200]
     hercai_url = f"https://hercai.onrender.com/v3/text2image?prompt={safe_prompt}"
 
-    # 3. SUMBER PLACEHOLDER (Picsum)
+    # Sumber 3: Picsum (Final Fallback)
     picsum_url = "https://picsum.photos/1280/720"
 
-    # List urutan percobaan
     sources = [
-        ("Flickr (Real)", flickr_url),
-        ("Hercai (AI)", hercai_url),
-        ("Picsum (Backup)", picsum_url)
+        ("Flickr", flickr_url),
+        ("Hercai AI", hercai_url),
+        ("Picsum", picsum_url)
     ]
 
     for source_name, url in sources:
         try:
-            print(f"      🎨 Trying Image Source: {source_name}...")
+            # print(f"      🎨 Trying Image: {source_name}...")
             
-            # Khusus Hercai butuh parsing JSON
             if "Hercai" in source_name:
-                resp = requests.get(url, timeout=40)
+                resp = requests.get(url, timeout=30)
                 if resp.status_code == 200:
                     json_data = resp.json()
                     if "url" in json_data:
@@ -107,81 +155,67 @@ def download_and_optimize_image(prompt, filename):
                     else: continue
                 else: continue
             else:
-                # Flickr/Picsum langsung return image binary
-                img_resp = requests.get(url, timeout=30, allow_redirects=True)
+                img_resp = requests.get(url, timeout=20, allow_redirects=True)
 
             if img_resp.status_code == 200:
                 img = Image.open(BytesIO(img_resp.content))
                 img = img.resize((1280, 720), Image.Resampling.LANCZOS)
                 img.convert("RGB").save(output_path, "JPEG", quality=85, optimize=True)
-                print(f"      ✅ Image Saved using {source_name}")
+                print(f"      ✅ Image Saved ({source_name})")
                 return True
                 
-        except Exception as e:
-            print(f"      ⚠️ {source_name} Failed: {e}")
-            time.sleep(2)
+        except Exception:
+            continue
     
-    print("      ❌ All Image Sources Failed.")
     return False
 
-# --- AI ENGINE ---
+# ==========================================
+# 🤖 GROQ CONTENT ENGINE
+# ==========================================
 def parse_ai_response(text):
     try:
         parts = text.split("|||BODY_START|||")
         if len(parts) < 2: return None
         json_part = parts[0].strip()
         body_part = parts[1].strip()
-        # Bersihkan markdown json jika ada
         json_part = re.sub(r'^```json', '', json_part)
         json_part = re.sub(r'```$', '', json_part)
         data = json.loads(json_part)
         data['content'] = body_part
         return data
     except Exception as e:
-        print(f"      ❌ Parse Error: {e}")
+        print(f"      ❌ JSON Parse Error: {e}")
         return None
 
-def get_groq_article_seo(title, summary, link, internal_links_map, target_category):
+def get_groq_article(keyword, context_entities, internal_links, category):
     MODEL_NAME = "llama-3.3-70b-versatile"
     
-    # Karena GTrends memberikan keyword, bukan judul lengkap, prompt harus disesuaikan
     system_prompt = f"""
-    You are a Senior Trend Analyst for a major US News Outlet.
-    TARGET CATEGORY: {target_category}
+    You are a Senior Journalist.
+    CATEGORY: {category}
     
-    INPUT DATA: You will receive a **Trending Keyword** and related news snippets/traffic info.
+    INPUT: Trending Keyword "{keyword}" (Context: {context_entities})
     
-    TASK: Write a comprehensive news article (1000+ words) explaining WHY this keyword is trending.
+    TASK: Write a 800-1000 word news article explaining this trend.
     
-    OUTPUT FORMAT (STRICT):
-    {{"title": "Click-worthy Headline based on the Trend", "description": "SEO description (150 chars)", "category": "{target_category}", "main_keyword": "The Trending Keyword", "image_prompt": "Visual description for Flickr search (simple tags)"}}
+    OUTPUT FORMAT (STRICT JSON + BODY):
+    {{"title": "Engaging Headline containing {keyword}", "description": "SEO description (150 chars)", "category": "{category}", "main_keyword": "{keyword}", "image_prompt": "visual tags for flickr search (e.g. {keyword}, press conference)"}}
     |||BODY_START|||
     [Markdown Article Content]
 
-    ARTICLE STRUCTURE:
-    1. **Trending Update** (Why is everyone searching this right now?)
-    2. **The Full Story** (5W1H - What happened?)
-    3. **Background** (Context/History)
-    4. **Social Sentiment** (What people are saying)
-    5. **Impact Analysis** (Why it matters)
+    STRUCTURE:
+    1. **Breaking News**: What is happening?
+    2. **Background**: Context/History.
+    3. **Impact**: Why it matters.
     
-    STYLE:
-    - Use H2 (##) and H3 (###).
-    - **Crucial**: Incorporate the keyword naturally.
-    - Use internal links: {internal_links_map}.
+    Use H2 (##). Use internal links: {internal_links}.
     """
 
-    user_prompt = f"""
-    TRENDING KEYWORD: {title}
-    CONTEXT/SNIPPETS: {summary}
-    GOOGLE SEARCH LINK: {link}
-    
-    Analyze this trend and write the article.
-    """
+    user_prompt = f"Write news about: {keyword}"
 
     for index, api_key in enumerate(GROQ_API_KEYS):
         try:
-            print(f"      🤖 AI Writing ({target_category})...")
+            print(f"      🤖 Generating Article for: {keyword}...")
             client = Groq(api_key=api_key)
             completion = client.chat.completions.create(
                 model=MODEL_NAME,
@@ -190,99 +224,97 @@ def get_groq_article_seo(title, summary, link, internal_links_map, target_catego
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.7,
-                max_tokens=6000,
+                max_tokens=5000,
             )
             return completion.choices[0].message.content
 
-        except BadRequestError as e:
-            print(f"      ⚠️ GROQ 400 ERROR: {e.body}")
-            continue
         except Exception as e:
-            print(f"      ⚠️ Error (Key #{index+1}): {e}")
+            print(f"      ⚠️ Groq Error (Key #{index}): {e}")
             continue
             
     return None
 
-# --- MAIN LOOP ---
+# ==========================================
+# 🚀 MAIN EXECUTION
+# ==========================================
 def main():
+    # Buat folder jika belum ada
     os.makedirs(CONTENT_DIR, exist_ok=True)
     os.makedirs(IMAGE_DIR, exist_ok=True)
     os.makedirs(DATA_DIR, exist_ok=True)
 
+    print("🔥 ENGINE STARTED: GITHUB ACTIONS MODE (PYTRENDS)")
+
     total_generated = 0
 
-    # LOOPING SETIAP KATEGORI
-    for category_name, rss_url in CATEGORY_URLS.items():
-        print(f"\n📡 Fetching GTrends: {category_name}...")
+    for category_name, cat_code in CATEGORY_MAPPING.items():
+        print(f"\n📡 Fetching Pytrends: {category_name}...")
         
-        # Parse RSS
-        feed = feedparser.parse(rss_url)
+        # 1. Ambil data dari Pytrends
+        trends = fetch_pytrends_data(cat_code)
         
-        if not feed.entries:
-            print(f"   ⚠️ No trends found for {category_name}. Skipping.")
+        if not trends:
+            print(f"   ⚠️ No trends data. Skipping {category_name}...")
+            # Jeda random agar tidak dikira bot spammer terus-terusan
+            time.sleep(random.randint(5, 10))
             continue
 
         cat_success_count = 0
         
-        for entry in feed.entries:
+        for trend in trends:
             if cat_success_count >= TARGET_PER_CATEGORY:
                 break
 
-            # Di Google Trends RSS, entry.title adalah KEYWORD (misal: "Taylor Swift")
-            trending_keyword = entry.title
+            keyword = trend['keyword']
+            context = trend['context']
             
-            # entry.summary biasanya berisi snippet berita terkait atau data traffic
-            trend_context = entry.summary if 'summary' in entry else "High Search Volume"
-            
-            clean_slug = slugify(trending_keyword)
+            clean_slug = slugify(keyword)
             filename = f"{clean_slug}.md"
 
+            # Cek duplikat
             if os.path.exists(f"{CONTENT_DIR}/{filename}"):
                 continue
 
-            print(f"   🔥 Trending: {trending_keyword}...")
+            print(f"   🔥 Processing: {keyword}...")
             
-            # 1. Generate AI
-            context = get_internal_links_context()
-            raw_response = get_groq_article_seo(trending_keyword, trend_context, entry.link, context, category_name)
+            # 2. Generate Content
+            internal_links = get_internal_links_context()
+            raw_response = get_groq_article(keyword, context, internal_links, category_name)
             
-            if not raw_response:
-                print("      ❌ AI Failed.")
-                continue
+            if not raw_response: continue
 
             data = parse_ai_response(raw_response)
-            if not data:
-                print("      ❌ Parse Failed.")
-                continue
+            if not data: continue
 
-            # 2. Image (Multi-Source Fallback)
+            # 3. Generate Image (Multi-source)
             img_name = f"{clean_slug}.jpg"
-            # Gunakan keyword dari AI atau keyword asli untuk pencarian gambar
-            image_search_term = data.get('image_prompt', trending_keyword)
-            has_img = download_and_optimize_image(image_search_term, img_name)
+            img_prompt = data.get('image_prompt', keyword)
+            has_img = download_and_optimize_image(img_prompt, img_name)
             
-            final_img = f"/images/{img_name}" if has_img else "/images/default-trend.jpg"
+            final_img = f"/images/{img_name}" if has_img else "/images/default-news.jpg"
             
-            # 3. Save Markdown
-            date = datetime.now().strftime("%Y-%m-%dT%H:%M:%S-05:00")
-            
-            md = f"""---
+            # 4. Save Markdown
+            date_str = datetime.now().strftime("%Y-%m-%dT%H:%M:%S-05:00")
+            md_content = f"""---
 title: "{data['title'].replace('"', "'")}"
-date: {date}
+date: {date_str}
 author: "{AUTHOR_NAME}"
 categories: ["{data['category']}"]
 tags: ["{data['main_keyword']}", "Trending"]
 featured_image: "{final_img}"
 description: "{data['description'].replace('"', "'")}"
+slug: "{slug}"
+url: "/{slug}/"
 draft: false
 ---
 
 {data['content']}
 
 ---
-*Sources: Analysis based on Google Trends Data and Search Volume.*
+*Sources: Analysis based on Realtime Trends data.*
 """
-            with open(f"{CONTENT_DIR}/{filename}", "w", encoding="utf-8") as f: f.write(md)
+            with open(f"{CONTENT_DIR}/{filename}", "w", encoding="utf-8") as f:
+                f.write(md_content)
             
             if 'main_keyword' in data: 
                 save_link_to_memory(data['main_keyword'], clean_slug)
@@ -291,10 +323,11 @@ draft: false
             cat_success_count += 1
             total_generated += 1
             
-            print("   zzz... Cooling down 10s...")
-            time.sleep(10)
+            # CRITICAL: Delay untuk menghindari ban IP di GitHub Actions
+            print("   💤 Cooling down 20s...")
+            time.sleep(30)
 
-    print(f"\n🎉 DONE! Total articles generated: {total_generated}")
+    print(f"\n🎉 DONE! Total articles: {total_generated}")
 
 if __name__ == "__main__":
     main()
